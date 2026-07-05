@@ -5,6 +5,10 @@ import { healthRoutes } from './routes/health.js';
 export async function buildApp(): Promise<FastifyInstance> {
   const app = fastify({
     logger: true,
+
+    // Explicit request-id header support — request IDs are available on every
+    // request for future structured logging, tracing, metrics, and diagnostics.
+    requestIdHeader: 'request-id',
   });
 
   // Global Error Handler

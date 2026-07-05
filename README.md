@@ -58,6 +58,25 @@ pnpm start
 
 ---
 
+## API Endpoints
+
+### `GET /health`
+
+Returns the current health status of the service.
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "service": "mcp-gateway",
+  "version": "1.0.0",
+  "timestamp": "2026-01-01T00:00:00.000Z"
+}
+```
+
+---
+
 ## Available Scripts
 
 | Script               | Description                                                   |
@@ -120,10 +139,18 @@ This project enforces high-quality standards through automated pre-commit gates:
 │       └── ci.yml        # GitHub Actions CI pipeline
 ├── .husky/               # Git hook handlers (e.g., pre-commit)
 ├── src/
+│   ├── ai/               # Future: AI provider integrations
 │   ├── config/
 │   │   └── env.ts        # Configuration Schema & Loading (Zod)
+│   ├── connections/      # Future: MCP server connections
+│   ├── discovery/        # Future: Service discovery
+│   ├── execution/        # Future: Tool execution engine
+│   ├── operations/       # Future: Operational workflows
 │   ├── routes/
 │   │   └── health.ts     # Routes definition (Health check)
+│   ├── shared/           # Future: Shared utilities
+│   ├── transport/        # Future: MCP transport layer
+│   ├── types/            # Future: Shared type definitions
 │   ├── app.ts            # Fastify Instance builder & Global Error Handler
 │   ├── app.test.ts       # Health endpoint and application tests
 │   ├── server.ts         # Server listen & graceful shutdown logic
