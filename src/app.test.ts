@@ -12,14 +12,25 @@ describe('application bootstrap', () => {
 });
 
 describe('GET /health', () => {
-  it('should return 200 status and ok', async () => {
+  it('should return 200 status with service details', async () => {
     const app = await buildApp();
     const response = await app.inject({
       method: 'GET',
       url: '/health',
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ status: 'ok' });
+
+    const body = response.json();
+    expect(body).toMatchObject({
+      status: 'ok',
+      service: 'mcp-gateway',
+      version: expect.any(String),
+      timestamp: expect.any(String),
+    });
+
+    const timestamp = new Date(body.timestamp);
+    expect(timestamp.getTime()).toBeGreaterThan(0);
+
     await app.close();
   });
 });
