@@ -31,9 +31,12 @@ RUN pnpm build
 # import.meta.dirname which points to dist/persistence/.
 RUN cp -r src/persistence/migrations dist/persistence/migrations
 
-# Prune devDependencies from node_modules.
-# pnpm prune removes devDep directories without running lifecycle hooks,
-# avoiding the prepare/husky failure that occurs with `pnpm install --prod`.
+# Strip the `prepare` lifecycle script (husky) from package.json before pruning.
+# Both pnpm install --prod and pnpm prune --prod still fire lifecycle hooks;
+# removing the script from the manifest is the definitive fix.
+RUN npm pkg delete scripts.prepare
+
+# Prune devDependencies — now safe since prepare no longer invokes husky.
 RUN pnpm prune --prod
 
 ###############################################################################
