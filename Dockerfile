@@ -26,6 +26,11 @@ COPY drizzle.config.ts ./
 # Build TypeScript
 RUN pnpm build
 
+# Copy SQL migration files into dist/ – tsc does not copy .sql assets.
+# At runtime, database.ts resolves the migrations folder relative to
+# import.meta.dirname which points to dist/persistence/.
+RUN cp -r src/persistence/migrations dist/persistence/migrations
+
 # Prune to production-only deps (re-uses pnpm store from above)
 RUN pnpm install --prod --frozen-lockfile
 
@@ -53,13 +58,6 @@ WORKDIR /app
 COPY --from=builder --chown=mcpgateway:mcpgateway /build/dist/ ./dist/
 COPY --from=builder --chown=mcpgateway:mcpgateway /build/node_modules/ ./node_modules/
 COPY --from=builder --chown=mcpgateway:mcpgateway /build/package.json ./package.json
-
-# Copy SQL migration files (they are not TypeScript – they stay as .sql)
-# Already included via dist/ since drizzle compiles them; but also copy originals
-# as the drizzle ORM reads them at runtime from the configured migrations path.
-# The build copies src/persistence/migrations → dist/persistence/migrations.
-# Nothing extra needed – migrations are .sql files and tsc copies them via
-# tsconfig outDir. Verify below just in case.
 
 # Create data directory with correct ownership
 RUN mkdir -p /app/data && chown mcpgateway:mcpgateway /app/data
