@@ -73,7 +73,6 @@ pnpm start
 | `pnpm test`          | Run Vitest test suite once.                                   |
 | `pnpm test:watch`    | Run Vitest in watch mode.                                     |
 | `pnpm test:coverage` | Run Vitest and output code coverage reports.                  |
-| `pnpm changeset`     | Add a new changeset to request a release description.         |
 
 ---
 
@@ -109,7 +108,6 @@ This project enforces high-quality standards through automated pre-commit gates:
    - Typecheck (`pnpm typecheck`)
    - Test suite (`pnpm test`)
    - Production build validation (`pnpm build`)
-4. **Changesets**: We use `@changesets/cli` to track version updates and package changes. Run `pnpm changeset` to define your change scope and description before submitting a pull request.
 
 ---
 
@@ -117,7 +115,6 @@ This project enforces high-quality standards through automated pre-commit gates:
 
 ```text
 .
-├── .changeset/           # Changeset configuration and markdown reports
 ├── .github/
 │   └── workflows/
 │       └── ci.yml        # GitHub Actions CI pipeline
