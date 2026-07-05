@@ -533,6 +533,7 @@ describe('ExecutionEngine', () => {
           connectionId,
           result: { mock: 'prompt' },
         }),
+        complete: vi.fn(),
         supportsCapability: vi.fn().mockReturnValue(true),
       };
 

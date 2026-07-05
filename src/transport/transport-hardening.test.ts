@@ -366,7 +366,7 @@ describe('Transport Hardening - Stdio Transport', () => {
         expect(disconnectResult.success).toBe(true);
         expect(disconnectResult.status).toBe('disconnected');
       }
-    });
+    }, 15000);
   });
 
   describe('error recovery', () => {

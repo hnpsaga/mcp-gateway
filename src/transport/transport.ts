@@ -17,12 +17,23 @@ export interface Transport {
     connectionId: string,
     toolName: string,
     args: Record<string, unknown>,
+    abortSignal?: AbortSignal,
   ): Promise<TransportExecuteToolResult>;
-  readResource(connectionId: string, resourceName: string): Promise<TransportReadResourceResult>;
+  readResource(
+    connectionId: string,
+    resourceName: string,
+    abortSignal?: AbortSignal,
+  ): Promise<TransportReadResourceResult>;
   executePrompt(
     connectionId: string,
     promptName: string,
     args: Record<string, unknown>,
+    abortSignal?: AbortSignal,
   ): Promise<TransportExecutePromptResult>;
+  complete(
+    connectionId: string,
+    ref: { type: 'ref/prompt'; name: string } | { type: 'ref/resource'; uri: string },
+    argument: { name: string; value: string },
+  ): Promise<unknown>;
   supportsCapability(capability: string): boolean;
 }

@@ -150,15 +150,64 @@ export class MockMcpServer {
       case 'notifications/initialized':
         break;
 
-      case 'tools/list':
-        this.sendResponse({
-          jsonrpc: '2.0',
-          id,
-          result: { tools: this.config.tools },
-        });
+      case 'tools/list': {
+        const cursor = (request.params as { cursor?: string })?.cursor;
+        if (!cursor) {
+          this.sendResponse({
+            jsonrpc: '2.0',
+            id,
+            result: {
+              tools: this.config.tools?.slice(0, 1) ?? [],
+              nextCursor: this.config.tools && this.config.tools.length > 1 ? 'page2' : undefined,
+            },
+          });
+        } else if (cursor === 'page2') {
+          this.sendResponse({
+            jsonrpc: '2.0',
+            id,
+            result: {
+              tools: this.config.tools?.slice(1) ?? [],
+            },
+          });
+        } else {
+          this.sendResponse({
+            jsonrpc: '2.0',
+            id,
+            result: { tools: [] },
+          });
+        }
         break;
+      }
 
-      case 'tools/call':
+      case 'tools/call': {
+        const progressToken = (request.params as { _meta?: { progressToken?: string | number } })
+          ?._meta?.progressToken;
+        if (progressToken) {
+          process.stdout.write(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'notifications/progress',
+              params: {
+                progressToken,
+                progress: 50,
+                total: 100,
+                message: 'In progress',
+              },
+            }) + '\n',
+          );
+        }
+        process.stdout.write(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'notifications/message',
+            params: {
+              level: 'info',
+              logger: 'mock-logger',
+              data: 'Tool call received successfully',
+            },
+          }) + '\n',
+        );
+
         this.sendResponse({
           jsonrpc: '2.0',
           id,
@@ -172,14 +221,37 @@ export class MockMcpServer {
           },
         });
         break;
+      }
 
-      case 'resources/list':
-        this.sendResponse({
-          jsonrpc: '2.0',
-          id,
-          result: { resources: this.config.resources },
-        });
+      case 'resources/list': {
+        const cursor = (request.params as { cursor?: string })?.cursor;
+        if (!cursor) {
+          this.sendResponse({
+            jsonrpc: '2.0',
+            id,
+            result: {
+              resources: this.config.resources?.slice(0, 1) ?? [],
+              nextCursor:
+                this.config.resources && this.config.resources.length > 1 ? 'page2' : undefined,
+            },
+          });
+        } else if (cursor === 'page2') {
+          this.sendResponse({
+            jsonrpc: '2.0',
+            id,
+            result: {
+              resources: this.config.resources?.slice(1) ?? [],
+            },
+          });
+        } else {
+          this.sendResponse({
+            jsonrpc: '2.0',
+            id,
+            result: { resources: [] },
+          });
+        }
         break;
+      }
 
       case 'resources/read':
         this.sendResponse({
@@ -197,13 +269,35 @@ export class MockMcpServer {
         });
         break;
 
-      case 'prompts/list':
-        this.sendResponse({
-          jsonrpc: '2.0',
-          id,
-          result: { prompts: this.config.prompts },
-        });
+      case 'prompts/list': {
+        const cursor = (request.params as { cursor?: string })?.cursor;
+        if (!cursor) {
+          this.sendResponse({
+            jsonrpc: '2.0',
+            id,
+            result: {
+              prompts: this.config.prompts?.slice(0, 1) ?? [],
+              nextCursor:
+                this.config.prompts && this.config.prompts.length > 1 ? 'page2' : undefined,
+            },
+          });
+        } else if (cursor === 'page2') {
+          this.sendResponse({
+            jsonrpc: '2.0',
+            id,
+            result: {
+              prompts: this.config.prompts?.slice(1) ?? [],
+            },
+          });
+        } else {
+          this.sendResponse({
+            jsonrpc: '2.0',
+            id,
+            result: { prompts: [] },
+          });
+        }
         break;
+      }
 
       case 'prompts/get':
         this.sendResponse({
@@ -220,6 +314,19 @@ export class MockMcpServer {
                 },
               },
             ],
+          },
+        });
+        break;
+
+      case 'completion/complete':
+        this.sendResponse({
+          jsonrpc: '2.0',
+          id,
+          result: {
+            completion: {
+              values: ['value1', 'value2'],
+              hasMore: false,
+            },
           },
         });
         break;

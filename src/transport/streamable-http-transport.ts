@@ -1,5 +1,6 @@
 import type { TransportConfig } from '../connections/connection.js';
 import type { ConnectionRegistry } from '../connections/connection-registry.js';
+import { ValidationError } from '../shared/errors/index.js';
 import { getLogger, sanitize, traceSpan } from '../shared/observability/index.js';
 import {
   transportConnectionsGauge,
@@ -151,6 +152,10 @@ export class StreamableHttpTransport extends BaseTransport {
 
         this.sessions.set(connectionId, session);
 
+        client.setNotificationHandler((method, params) => {
+          this.handleNotification(connectionId, method, params);
+        });
+
         const connectionTimer = setTimeout(() => {
           this.cleanupSession(connectionId, 'Connection timed out');
         }, this.options.connectionTimeout);
@@ -158,17 +163,46 @@ export class StreamableHttpTransport extends BaseTransport {
         const initResult = await this.sendRequest(session, httpClient, 'initialize', {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {},
+          clientInfo: {
+            name: 'mcp-gateway',
+            version: '1.0.0',
+          },
         });
 
         const initResponse = initResult.result as Record<string, unknown>;
         const serverProtocolVersion = (initResponse.protocolVersion as string) ?? '';
 
-        if (serverProtocolVersion && serverProtocolVersion !== MCP_PROTOCOL_VERSION) {
-          this.onProtocolMismatch(connectionId, MCP_PROTOCOL_VERSION, serverProtocolVersion);
+        if (!serverProtocolVersion) {
+          throw new ValidationError(
+            'Server failed to return protocolVersion during initialization',
+          );
         }
 
-        session.serverCapabilities =
-          (initResponse.serverCapabilities as Record<string, unknown>) ?? {};
+        const SUPPORTED_PROTOCOL_VERSIONS = ['2024-11-05', '2024-10-07'];
+        const isSupported = SUPPORTED_PROTOCOL_VERSIONS.includes(serverProtocolVersion);
+        if (!isSupported) {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(serverProtocolVersion)) {
+            getLogger().warn(
+              { connectionId, serverProtocolVersion },
+              `Server returned unsupported but plausible protocol version. Proceeding in compatibility mode.`,
+            );
+          } else {
+            throw new ValidationError(
+              `Unsupported protocol version: ${serverProtocolVersion}. Supported versions: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}`,
+            );
+          }
+        }
+
+        const rawCapabilities =
+          (initResponse.capabilities as Record<string, unknown>) ??
+          (initResponse.serverCapabilities as Record<string, unknown>) ??
+          {};
+
+        if (typeof rawCapabilities !== 'object' || rawCapabilities === null) {
+          throw new ValidationError('Server returned invalid capabilities object');
+        }
+
+        session.serverCapabilities = rawCapabilities;
         session.protocolVersion = serverProtocolVersion;
 
         await this.sendNotification(session, httpClient, 'notifications/initialized');
@@ -420,53 +454,118 @@ export class StreamableHttpTransport extends BaseTransport {
         }> = [];
 
         if (capabilities.tools !== false) {
-          const toolsResult = await this.sendRequest(session, httpClient, 'tools/list');
-          const toolsData = toolsResult.result as { tools?: Array<Record<string, unknown>> };
-          if (toolsData.tools) {
-            for (const tool of toolsData.tools) {
-              tools.push({
-                name: tool.name as string,
-                description: tool.description as string | undefined,
-                inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
-              });
+          try {
+            let nextCursor: string | undefined;
+            do {
+              const params: { cursor?: string } = {};
+              if (nextCursor) {
+                params.cursor = nextCursor;
+              }
+              const toolsResult = await this.sendRequest(session, httpClient, 'tools/list', params);
+              const toolsData = toolsResult.result as {
+                tools?: Array<Record<string, unknown>>;
+                nextCursor?: string;
+              };
+              if (toolsData.tools) {
+                for (const tool of toolsData.tools) {
+                  tools.push({
+                    name: tool.name as string,
+                    description: tool.description as string | undefined,
+                    inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
+                  });
+                }
+              }
+              nextCursor = toolsData.nextCursor;
+            } while (nextCursor);
+          } catch (error) {
+            if (error instanceof JsonRpcError && error.rpcCode === -32601) {
+              getLogger().warn({ connectionId, error }, 'Server does not support tools/list');
+            } else {
+              throw error;
             }
           }
         }
 
         if (capabilities.resources !== false) {
-          const resourcesResult = await this.sendRequest(session, httpClient, 'resources/list');
-          const resourcesData = resourcesResult.result as {
-            resources?: Array<Record<string, unknown>>;
-          };
-          if (resourcesData.resources) {
-            for (const resource of resourcesData.resources) {
-              resources.push({
-                name: resource.name as string,
-                uri: resource.uri as string,
-                description: resource.description as string | undefined,
-                mimeType: resource.mimeType as string | undefined,
-              });
+          try {
+            let nextCursor: string | undefined;
+            do {
+              const params: { cursor?: string } = {};
+              if (nextCursor) {
+                params.cursor = nextCursor;
+              }
+              const resourcesResult = await this.sendRequest(
+                session,
+                httpClient,
+                'resources/list',
+                params,
+              );
+              const resourcesData = resourcesResult.result as {
+                resources?: Array<Record<string, unknown>>;
+                nextCursor?: string;
+              };
+              if (resourcesData.resources) {
+                for (const resource of resourcesData.resources) {
+                  resources.push({
+                    name: resource.name as string,
+                    uri: resource.uri as string,
+                    description: resource.description as string | undefined,
+                    mimeType: resource.mimeType as string | undefined,
+                  });
+                }
+              }
+              nextCursor = resourcesData.nextCursor;
+            } while (nextCursor);
+          } catch (error) {
+            if (error instanceof JsonRpcError && error.rpcCode === -32601) {
+              getLogger().warn({ connectionId, error }, 'Server does not support resources/list');
+            } else {
+              throw error;
             }
           }
         }
 
         if (capabilities.prompts !== false) {
-          const promptsResult = await this.sendRequest(session, httpClient, 'prompts/list');
-          const promptsData = promptsResult.result as { prompts?: Array<Record<string, unknown>> };
-          if (promptsData.prompts) {
-            for (const prompt of promptsData.prompts) {
-              const args = (prompt.arguments as Array<Record<string, unknown>> | undefined)?.map(
-                (a) => ({
-                  name: a.name as string,
-                  description: a.description as string | undefined,
-                  required: a.required as boolean | undefined,
-                }),
+          try {
+            let nextCursor: string | undefined;
+            do {
+              const params: { cursor?: string } = {};
+              if (nextCursor) {
+                params.cursor = nextCursor;
+              }
+              const promptsResult = await this.sendRequest(
+                session,
+                httpClient,
+                'prompts/list',
+                params,
               );
-              prompts.push({
-                name: prompt.name as string,
-                description: prompt.description as string | undefined,
-                arguments: args,
-              });
+              const promptsData = promptsResult.result as {
+                prompts?: Array<Record<string, unknown>>;
+                nextCursor?: string;
+              };
+              if (promptsData.prompts) {
+                for (const prompt of promptsData.prompts) {
+                  const args = (
+                    prompt.arguments as Array<Record<string, unknown>> | undefined
+                  )?.map((a) => ({
+                    name: a.name as string,
+                    description: a.description as string | undefined,
+                    required: a.required as boolean | undefined,
+                  }));
+                  prompts.push({
+                    name: prompt.name as string,
+                    description: prompt.description as string | undefined,
+                    arguments: args,
+                  });
+                }
+              }
+              nextCursor = promptsData.nextCursor;
+            } while (nextCursor);
+          } catch (error) {
+            if (error instanceof JsonRpcError && error.rpcCode === -32601) {
+              getLogger().warn({ connectionId, error }, 'Server does not support prompts/list');
+            } else {
+              throw error;
             }
           }
         }
@@ -509,6 +608,7 @@ export class StreamableHttpTransport extends BaseTransport {
     connectionId: string,
     toolName: string,
     args: Record<string, unknown>,
+    abortSignal?: AbortSignal,
   ): Promise<TransportExecuteToolResult> {
     const start = process.hrtime();
     const activeLogger = getLogger().child({ component: 'Transport' });
@@ -560,10 +660,16 @@ export class StreamableHttpTransport extends BaseTransport {
 
       try {
         const httpClient = this.createHttpClient(session);
-        const result = await this.sendRequest(session, httpClient, 'tools/call', {
-          name: toolName,
-          arguments: args,
-        });
+        const result = await this.sendRequest(
+          session,
+          httpClient,
+          'tools/call',
+          {
+            name: toolName,
+            arguments: args,
+          },
+          abortSignal,
+        );
 
         const diff = process.hrtime(start);
         const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
@@ -599,6 +705,7 @@ export class StreamableHttpTransport extends BaseTransport {
   async readResource(
     connectionId: string,
     resourceName: string,
+    abortSignal?: AbortSignal,
   ): Promise<TransportReadResourceResult> {
     const start = process.hrtime();
     const activeLogger = getLogger().child({ component: 'Transport' });
@@ -671,7 +778,13 @@ export class StreamableHttpTransport extends BaseTransport {
         }
 
         const uri = resource.uri as string;
-        const readResult = await this.sendRequest(session, httpClient, 'resources/read', { uri });
+        const readResult = await this.sendRequest(
+          session,
+          httpClient,
+          'resources/read',
+          { uri },
+          abortSignal,
+        );
 
         const diff = process.hrtime(start);
         const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
@@ -708,6 +821,7 @@ export class StreamableHttpTransport extends BaseTransport {
     connectionId: string,
     promptName: string,
     args: Record<string, unknown>,
+    abortSignal?: AbortSignal,
   ): Promise<TransportExecutePromptResult> {
     const start = process.hrtime();
     const activeLogger = getLogger().child({ component: 'Transport' });
@@ -759,10 +873,16 @@ export class StreamableHttpTransport extends BaseTransport {
 
       try {
         const httpClient = this.createHttpClient(session);
-        const result = await this.sendRequest(session, httpClient, 'prompts/get', {
-          name: promptName,
-          arguments: args,
-        });
+        const result = await this.sendRequest(
+          session,
+          httpClient,
+          'prompts/get',
+          {
+            name: promptName,
+            arguments: args,
+          },
+          abortSignal,
+        );
 
         const diff = process.hrtime(start);
         const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
@@ -795,8 +915,82 @@ export class StreamableHttpTransport extends BaseTransport {
     });
   }
 
+  async complete(
+    connectionId: string,
+    ref: { type: 'ref/prompt'; name: string } | { type: 'ref/resource'; uri: string },
+    argument: { name: string; value: string },
+  ): Promise<unknown> {
+    const start = process.hrtime();
+    const activeLogger = getLogger().child({ component: 'Transport' });
+    activeLogger.debug({ args: [connectionId, ref, argument] }, 'Starting Transport.complete');
+
+    return traceSpan('Transport.complete', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'Transport');
+        span.setAttribute('method', 'complete');
+        span.setAttribute('connectionId', connectionId);
+      }
+
+      if (!this.connectionRegistry) {
+        return {
+          success: true,
+          connectionId,
+          result: { completion: { values: [] } },
+        };
+      }
+
+      const session = this.sessions.get(connectionId);
+      if (!session || session.state !== 'connected') {
+        const result = {
+          success: false,
+          connectionId,
+          error: `Connection '${connectionId}' is not connected`,
+        };
+        transportFailures.inc({ transport: 'http', type: 'execution_failed' });
+        return result;
+      }
+
+      try {
+        const httpClient = this.createHttpClient(session);
+        const result = await this.sendRequest(session, httpClient, 'completion/complete', {
+          ref,
+          argument,
+        });
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.debug({ durationMs }, 'Completed Transport.complete');
+
+        return {
+          success: true,
+          connectionId,
+          result: result.result,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Completion failed';
+        const errMsg = message.toLowerCase();
+        if (errMsg.includes('protocol') || errMsg.includes('version')) {
+          transportProtocolErrors.inc({ transport: 'http' });
+        } else {
+          transportFailures.inc({ transport: 'http', type: 'execution_failed' });
+        }
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error({ durationMs, error }, `Error in Transport.complete: ${message}`);
+
+        return {
+          success: false,
+          connectionId,
+          error: message,
+        };
+      }
+    });
+  }
+
   supportsCapability(capability: string): boolean {
     if (capability === 'streamable-http') return true;
+    if (capability === 'complete') return true;
     return super.supportsCapability(capability);
   }
 
@@ -830,6 +1024,7 @@ export class StreamableHttpTransport extends BaseTransport {
     httpClient: HttpClient,
     method: string,
     params?: unknown,
+    abortSignal?: AbortSignal,
   ) {
     let capturedRequest: string | null = null;
 
@@ -837,7 +1032,7 @@ export class StreamableHttpTransport extends BaseTransport {
       capturedRequest = msg;
     });
 
-    const jsonRpcPromise = session.client.request(method, params);
+    const jsonRpcPromise = session.client.request(method, params, undefined, abortSignal);
     jsonRpcPromise.catch(() => {});
 
     if (!capturedRequest) {
@@ -904,6 +1099,66 @@ export class StreamableHttpTransport extends BaseTransport {
       } catch {
         // Notifications are fire-and-forget
       }
+    }
+  }
+
+  private handleNotification(connectionId: string, method: string, params: unknown): void {
+    const activeLogger = getLogger().child({ component: 'Transport', connectionId });
+
+    if (method === 'notifications/message') {
+      const logParams = params as { level?: string; logger?: string; data?: unknown };
+      const serverLevel = logParams.level ?? 'info';
+      const loggerName = logParams.logger ?? 'server';
+      const data = logParams.data;
+
+      const redactedData = sanitize(data);
+
+      const msg = `[Server Log: ${loggerName}] ${typeof redactedData === 'string' ? redactedData : JSON.stringify(redactedData)}`;
+
+      switch (serverLevel) {
+        case 'debug':
+          activeLogger.debug({ serverLevel, loggerName, data: redactedData }, msg);
+          break;
+        case 'info':
+        case 'notice':
+          activeLogger.info({ serverLevel, loggerName, data: redactedData }, msg);
+          break;
+        case 'warning':
+          activeLogger.warn({ serverLevel, loggerName, data: redactedData }, msg);
+          break;
+        case 'error':
+        case 'critical':
+        case 'alert':
+        case 'emergency':
+          activeLogger.error({ serverLevel, loggerName, data: redactedData }, msg);
+          break;
+        default:
+          activeLogger.info({ serverLevel, loggerName, data: redactedData }, msg);
+          break;
+      }
+    } else if (method === 'notifications/progress') {
+      const progressParams = params as {
+        progressToken: string | number;
+        progress: number;
+        total?: number;
+        message?: string;
+      };
+
+      const redactedMsg = progressParams.message
+        ? (sanitize(progressParams.message) as string)
+        : '';
+
+      activeLogger.info(
+        {
+          progressToken: progressParams.progressToken,
+          progress: progressParams.progress,
+          total: progressParams.total,
+          progressMessage: redactedMsg,
+        },
+        `Progress update: ${redactedMsg} (${progressParams.progress}/${progressParams.total ?? 'unknown'})`,
+      );
+    } else {
+      activeLogger.warn({ method, params }, `Unhandled server notification: ${method}`);
     }
   }
 }

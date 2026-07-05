@@ -49,6 +49,7 @@ export abstract class BaseTransport implements Transport {
     connectionId: string,
     _toolName: string,
     _args: Record<string, unknown>,
+    _abortSignal?: AbortSignal,
   ): Promise<TransportExecuteToolResult> {
     return {
       success: true,
@@ -60,6 +61,7 @@ export abstract class BaseTransport implements Transport {
   async readResource(
     connectionId: string,
     _resourceName: string,
+    _abortSignal?: AbortSignal,
   ): Promise<TransportReadResourceResult> {
     return {
       success: true,
@@ -72,11 +74,24 @@ export abstract class BaseTransport implements Transport {
     connectionId: string,
     _promptName: string,
     _args: Record<string, unknown>,
+    _abortSignal?: AbortSignal,
   ): Promise<TransportExecutePromptResult> {
     return {
       success: true,
       connectionId,
       result: { status: 'executed' },
+    };
+  }
+
+  async complete(
+    connectionId: string,
+    _ref: { type: 'ref/prompt'; name: string } | { type: 'ref/resource'; uri: string },
+    _argument: { name: string; value: string },
+  ): Promise<unknown> {
+    return {
+      success: true,
+      connectionId,
+      result: { completion: { values: [] } },
     };
   }
 
@@ -89,6 +104,7 @@ export abstract class BaseTransport implements Transport {
       'execute-tool',
       'read-resource',
       'execute-prompt',
+      'complete',
     ].includes(capability);
   }
 }
