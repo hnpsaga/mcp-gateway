@@ -1,8 +1,10 @@
-import fastify, { FastifyInstance } from 'fastify';
+import fastifySwagger from '@fastify/swagger';
+import fastifySwaggerUi from '@fastify/swagger-ui';
+import fastify, { type FastifyInstance } from 'fastify';
 
+import { ApiError } from './lib/api/error-handler.js';
+import { v1Routes } from './routes/api/v1/index.js';
 import { healthRoutes } from './routes/health.js';
-import { AppError } from './shared/errors/app-error.js';
-import type { ErrorResponse } from './shared/response/error-response.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = fastify({
@@ -10,32 +12,36 @@ export async function buildApp(): Promise<FastifyInstance> {
     requestIdHeader: 'request-id',
   });
 
-  app.setErrorHandler((error: Error, request, reply) => {
-    app.log.error(error);
-
-    if (error instanceof AppError) {
-      const body: ErrorResponse = {
-        success: false,
-        error: {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-        },
-      };
-      return reply.status(error.statusCode).send(body);
-    }
-
-    const body: ErrorResponse = {
-      success: false,
-      error: {
-        code: 'INTERNAL_ERROR',
-        message: 'An unexpected error occurred',
+  await app.register(fastifySwagger, {
+    openapi: {
+      info: {
+        title: 'MCP Gateway API',
+        description: 'REST API for managing and interacting with MCP servers',
+        version: '1.0.0',
       },
-    };
-    return reply.status(500).send(body);
+      servers: [
+        {
+          url: 'http://localhost:3000',
+          description: 'Development server',
+        },
+      ],
+    },
   });
 
+  await app.register(fastifySwaggerUi, {
+    routePrefix: '/documentation',
+  });
+
+  app.addHook('onSend', (_request, reply, _payload, done) => {
+    void reply.header('request-id', reply.request.id);
+    done();
+  });
+
+  app.setErrorHandler(ApiError);
+
   await app.register(healthRoutes);
+
+  await app.register(v1Routes, { prefix: '/api/v1' });
 
   return app;
 }

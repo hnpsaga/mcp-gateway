@@ -12,7 +12,7 @@ describe('application bootstrap', () => {
   });
 });
 
-describe('GET /health', () => {
+describe('root health endpoint (GET /health)', () => {
   it('should return 200 status with service details', async () => {
     const app = await buildApp();
     const response = await app.inject({
@@ -36,17 +36,77 @@ describe('GET /health', () => {
   });
 });
 
-describe('global error handler', () => {
-  it('should return structured error for AppError instances', async () => {
+describe('API version registration', () => {
+  it('should register routes under /api/v1 prefix', async () => {
     const app = await buildApp();
     const response = await app.inject({
       method: 'GET',
-      url: '/health',
+      url: '/api/v1/health',
     });
     expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    expect(body).toMatchObject({
+      status: 'ok',
+    });
+
+    await app.close();
+  });
+});
+
+describe('OpenAPI generation', () => {
+  it('should generate OpenAPI specification at /documentation/json', async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/documentation/json',
+    });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    expect(body).toMatchObject({
+      openapi: expect.any(String),
+      info: {
+        title: 'MCP Gateway API',
+        version: '1.0.0',
+      },
+    });
+
     await app.close();
   });
 
+  it('should include health endpoint in the specification', async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/documentation/json',
+    });
+    const body = response.json();
+
+    expect(body.paths).toBeDefined();
+    const healthPath = body.paths['/api/v1/health'];
+    expect(healthPath).toBeDefined();
+    expect(healthPath.get).toBeDefined();
+
+    await app.close();
+  });
+});
+
+describe('Swagger UI availability', () => {
+  it('should serve Swagger UI at /documentation', async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/documentation',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/html');
+
+    await app.close();
+  });
+});
+
+describe('global error handler', () => {
   it('should return 400 for ValidationError', async () => {
     const app = await buildApp();
     app.get('/test-validation', () => {
@@ -126,6 +186,84 @@ describe('global error handler', () => {
         message: 'An unexpected error occurred',
       },
     });
+    await app.close();
+  });
+});
+
+describe('global request validation', () => {
+  it('should return 400 for schema validation failures', async () => {
+    const app = await buildApp();
+    app.post(
+      '/test-validate',
+      {
+        schema: {
+          body: {
+            type: 'object',
+            required: ['name'],
+            properties: {
+              name: { type: 'string' },
+            },
+          },
+        },
+      },
+      async () => {
+        return { success: true };
+      },
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/test-validate',
+      payload: {},
+    });
+    expect(response.statusCode).toBe(400);
+
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(body.error.message).toBe('Request validation failed');
+    expect(body.error.details).toBeDefined();
+
+    await app.close();
+  });
+});
+
+describe('request IDs', () => {
+  it('should include request-id in response headers', async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/health',
+    });
+    expect(response.headers['request-id']).toBeDefined();
+    expect(typeof response.headers['request-id']).toBe('string');
+
+    await app.close();
+  });
+
+  it('should preserve a provided request-id header', async () => {
+    const app = await buildApp();
+    const testId = 'test-correlation-id-123';
+    const response = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: {
+        'request-id': testId,
+      },
+    });
+    expect(response.headers['request-id']).toBe(testId);
+
+    await app.close();
+  });
+});
+
+describe('route registration', () => {
+  it('should have all placeholder route modules registered', async () => {
+    const app = await buildApp();
+    const routes = app.printRoutes();
+
+    expect(routes).toContain('api/v1/health');
+
     await app.close();
   });
 });
