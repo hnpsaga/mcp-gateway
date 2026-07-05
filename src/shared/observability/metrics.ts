@@ -53,26 +53,26 @@ export const disabledConnectionsGauge = new prom.Gauge({
 export const discoveryRequestsCounter = new prom.Counter({
   name: 'mcp_gateway_discovery_requests_total',
   help: 'Total number of discovery requests',
-  labelNames: ['connection_id', 'status'], // status: 'success' | 'failure'
+  labelNames: ['transport', 'status'], // status: 'success' | 'failure'
 });
 
 export const discoveryCacheCounter = new prom.Counter({
   name: 'mcp_gateway_discovery_cache_total',
   help: 'Total number of discovery cache queries',
-  labelNames: ['connection_id', 'result'], // result: 'hit' | 'miss'
+  labelNames: ['result'], // result: 'hit' | 'miss'
 });
 
 // 4. Execution Metrics
 export const executionCounter = new prom.Counter({
   name: 'mcp_gateway_executions_total',
   help: 'Total number of executions',
-  labelNames: ['connection_id', 'type', 'name', 'status'], // type: 'tool' | 'resource' | 'prompt', status: 'success' | 'failure'
+  labelNames: ['type', 'status'], // type: 'tool' | 'resource' | 'prompt', status: 'success' | 'failure'
 });
 
 export const executionDuration = new prom.Histogram({
   name: 'mcp_gateway_execution_duration_seconds',
   help: 'Duration of executions in seconds',
-  labelNames: ['connection_id', 'type', 'name', 'status'],
+  labelNames: ['type', 'status'],
   buckets: [0.01, 0.05, 0.1, 0.5, 1, 2.5, 5, 10, 30],
 });
 
@@ -86,19 +86,19 @@ export const transportConnectionsGauge = new prom.Gauge({
 export const transportReconnectAttempts = new prom.Counter({
   name: 'mcp_gateway_transport_reconnect_attempts_total',
   help: 'Total number of transport reconnect attempts',
-  labelNames: ['connection_id'],
+  labelNames: ['transport'],
 });
 
 export const transportFailures = new prom.Counter({
   name: 'mcp_gateway_transport_failures_total',
   help: 'Total number of transport failures',
-  labelNames: ['connection_id', 'type'],
+  labelNames: ['transport', 'type'],
 });
 
 export const transportProtocolErrors = new prom.Counter({
   name: 'mcp_gateway_transport_protocol_errors_total',
   help: 'Total number of protocol errors',
-  labelNames: ['connection_id'],
+  labelNames: ['transport'],
 });
 
 // 6. Persistence Metrics

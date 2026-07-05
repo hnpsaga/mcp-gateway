@@ -26,3 +26,47 @@ export function getLogger(): pino.Logger {
   const store = telemetryContextStorage.getStore();
   return (store?.logger ?? logger) as pino.Logger;
 }
+
+export function sanitize(val: unknown): unknown {
+  if (val === null || val === undefined) {
+    return val;
+  }
+  if (typeof val === 'string') {
+    const lowerVal = val.toLowerCase();
+    if (
+      lowerVal.startsWith('bearer ') ||
+      lowerVal.includes('key') ||
+      lowerVal.includes('secret') ||
+      lowerVal.includes('token') ||
+      lowerVal.includes('password') ||
+      val.length > 200
+    ) {
+      return '[REDACTED]';
+    }
+    return val;
+  }
+  if (Array.isArray(val)) {
+    return val.map(sanitize);
+  }
+  if (typeof val === 'object') {
+    const sanitized: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+      const lowerK = k.toLowerCase();
+      if (
+        lowerK.includes('key') ||
+        lowerK.includes('secret') ||
+        lowerK.includes('token') ||
+        lowerK.includes('password') ||
+        lowerK.includes('auth') ||
+        lowerK.includes('credential') ||
+        lowerK.includes('private')
+      ) {
+        sanitized[k] = '[REDACTED]';
+      } else {
+        sanitized[k] = sanitize(v);
+      }
+    }
+    return sanitized;
+  }
+  return val;
+}

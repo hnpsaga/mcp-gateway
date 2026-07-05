@@ -20,7 +20,6 @@ import {
 import { v1Routes } from './routes/api/v1/index.js';
 import { healthRoutes } from './routes/health.js';
 import {
-  createTelemetryProxy,
   logger,
   shutdownTracing,
   telemetryContextStorage,
@@ -136,26 +135,20 @@ export async function buildApp(): Promise<FastifyInstance> {
   const db = initializeDatabase(dbConfig);
   runMigrations(db);
 
-  const rawRepository = new SqliteConnectionRepository();
-  const connectionRepository = createTelemetryProxy(rawRepository, 'ConnectionRepository');
+  const connectionRepository = new SqliteConnectionRepository();
 
-  const rawRegistry = new ConnectionRegistry(connectionRepository);
-  const connectionRegistry = createTelemetryProxy(rawRegistry, 'ConnectionRegistry');
+  const connectionRegistry = new ConnectionRegistry(connectionRepository);
   app.decorate('connectionRegistry', connectionRegistry);
 
-  const rawCache = new SqliteDiscoveryCache();
-  const discoveryCache = createTelemetryProxy(rawCache, 'DiscoveryCache');
+  const discoveryCache = new SqliteDiscoveryCache();
 
-  const rawTransport = new StdioTransport(connectionRegistry);
-  const transport = createTelemetryProxy(rawTransport, 'Transport');
+  const transport = new StdioTransport(connectionRegistry);
   app.decorate('transport', transport);
 
-  const rawDiscoveryEngine = new DiscoveryEngine(connectionRegistry, transport, discoveryCache);
-  const discoveryEngine = createTelemetryProxy(rawDiscoveryEngine, 'DiscoveryEngine');
+  const discoveryEngine = new DiscoveryEngine(connectionRegistry, transport, discoveryCache);
   app.decorate('discoveryEngine', discoveryEngine);
 
-  const rawExecutionEngine = new ExecutionEngine(connectionRegistry, discoveryEngine, transport);
-  const executionEngine = createTelemetryProxy(rawExecutionEngine, 'ExecutionEngine');
+  const executionEngine = new ExecutionEngine(connectionRegistry, discoveryEngine, transport);
   app.decorate('executionEngine', executionEngine);
 
   const openapi: Record<string, unknown> = {

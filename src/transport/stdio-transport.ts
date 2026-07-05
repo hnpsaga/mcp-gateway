@@ -1,5 +1,11 @@
 import type { TransportConfig } from '../connections/connection.js';
 import type { ConnectionRegistry } from '../connections/connection-registry.js';
+import { getLogger, sanitize, traceSpan } from '../shared/observability/index.js';
+import {
+  transportConnectionsGauge,
+  transportFailures,
+  transportProtocolErrors,
+} from '../shared/observability/metrics.js';
 import { BaseTransport } from './base-transport.js';
 import { JsonRpcClient } from './json-rpc-client.js';
 import { StdioProcessManager } from './stdio-process-manager.js';
@@ -68,173 +74,249 @@ export class StdioTransport extends BaseTransport {
   }
 
   async connect(connectionId: string): Promise<ConnectResult> {
-    if (!this.connectionRegistry) {
-      return super.connect(connectionId);
-    }
+    const start = process.hrtime();
+    const activeLogger = getLogger().child({ component: 'Transport' });
+    activeLogger.info({ args: [connectionId] }, 'Starting Transport.connect');
 
-    if (this.sessions.has(connectionId)) {
-      return {
-        success: false,
-        connectionId,
-        status: 'failed',
-        error: `Session already exists for connection '${connectionId}'`,
-      };
-    }
+    return traceSpan('Transport.connect', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'Transport');
+        span.setAttribute('method', 'connect');
+        span.setAttribute('connectionId', connectionId);
+      }
 
-    try {
-      const connection = await this.connectionRegistry.get(connectionId);
+      if (!this.connectionRegistry) {
+        const result = await super.connect(connectionId);
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.info({ durationMs }, 'Completed Transport.connect successfully');
+        return result;
+      }
 
-      if (!connection.enabled) {
+      if (this.sessions.has(connectionId)) {
+        const result = {
+          success: false,
+          connectionId,
+          status: 'failed' as const,
+          error: `Session already exists for connection '${connectionId}'`,
+        };
+        transportFailures.inc({ transport: 'stdio', type: 'connect_failed' });
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error(
+          { durationMs, error: result.error },
+          `Error in Transport.connect: ${result.error}`,
+        );
+        return result;
+      }
+
+      try {
+        const connection = await this.connectionRegistry.get(connectionId);
+
+        if (!connection.enabled) {
+          const result = {
+            success: false,
+            connectionId,
+            status: 'failed' as const,
+            error: `Connection '${connectionId}' is disabled`,
+          };
+          transportFailures.inc({ transport: 'stdio', type: 'connect_failed' });
+          const diff = process.hrtime(start);
+          const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+          activeLogger.error(
+            { durationMs, error: result.error },
+            `Error in Transport.connect: ${result.error}`,
+          );
+          return result;
+        }
+
+        const config = extractTransportConfig(connection.transportConfig);
+
+        const processManager = new StdioProcessManager({
+          maxStdoutBufferSize: this.options.maxStdoutBufferSize,
+          maxStderrBufferSize: this.options.maxStderrBufferSize,
+          startupTimeout: this.options.processStartupTimeout,
+        });
+
+        const client = new JsonRpcClient({
+          defaultTimeout: config.requestTimeout,
+          maxMessageSize: this.options.maxMessageSize,
+          maxPendingRequests: this.options.maxConcurrentRequests,
+        });
+
+        const session: StdioSession = {
+          connectionId,
+          process: processManager,
+          client,
+          state: 'connecting',
+          createdAt: new Date(),
+          serverCapabilities: {},
+          protocolVersion: '',
+        };
+
+        this.sessions.set(connectionId, session);
+
+        const connectionTimer = setTimeout(() => {
+          this.cleanupSession(connectionId, 'Connection timed out');
+        }, this.options.connectionTimeout);
+
+        client.setMessageHandler((message) => {
+          if (processManager.isRunning()) {
+            processManager.send(message);
+          }
+        });
+
+        processManager.spawn(
+          { command: config.command, args: config.args, env: config.env, cwd: config.cwd },
+          {
+            onStdout: (data: string) => {
+              client.handleData(data);
+            },
+            onStderr: (data: string) => {
+              this.onStderr(connectionId, data);
+            },
+            onExit: (code: number | null, signal: string | null) => {
+              clearTimeout(connectionTimer);
+              this.onProcessExit(connectionId, code, signal);
+            },
+            onError: (error: Error) => {
+              clearTimeout(connectionTimer);
+              this.onProcessError(connectionId, error);
+            },
+          },
+        );
+
+        const initResult = await client.request(
+          'initialize',
+          {
+            protocolVersion: MCP_PROTOCOL_VERSION,
+            capabilities: {},
+          },
+          this.options.initializeTimeout,
+        );
+
+        const initResponse = initResult.result as Record<string, unknown>;
+        const serverProtocolVersion = (initResponse.protocolVersion as string) ?? '';
+
+        if (serverProtocolVersion && serverProtocolVersion !== MCP_PROTOCOL_VERSION) {
+          this.onProtocolMismatch(connectionId, MCP_PROTOCOL_VERSION, serverProtocolVersion);
+        }
+
+        session.serverCapabilities =
+          (initResponse.serverCapabilities as Record<string, unknown>) ?? {};
+        session.protocolVersion = serverProtocolVersion;
+
+        client.notification('notifications/initialized');
+
+        session.state = 'connected';
+
+        clearTimeout(connectionTimer);
+
+        transportConnectionsGauge.set({ transport_type: 'stdio' }, this.sessions.size);
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.info({ durationMs }, 'Completed Transport.connect successfully');
+
+        return {
+          success: true,
+          connectionId,
+          status: 'connected',
+        };
+      } catch (error) {
+        this.cleanupSession(
+          connectionId,
+          error instanceof Error ? error.message : 'Connection failed',
+        );
+
+        transportFailures.inc({ transport: 'stdio', type: 'connect_failed' });
+        transportConnectionsGauge.set({ transport_type: 'stdio' }, this.sessions.size);
+
+        const message = error instanceof Error ? error.message : 'Connection failed';
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error({ durationMs, error }, `Error in Transport.connect: ${message}`);
+
         return {
           success: false,
           connectionId,
           status: 'failed',
-          error: `Connection '${connectionId}' is disabled`,
+          error: message,
         };
       }
-
-      const config = extractTransportConfig(connection.transportConfig);
-
-      const processManager = new StdioProcessManager({
-        maxStdoutBufferSize: this.options.maxStdoutBufferSize,
-        maxStderrBufferSize: this.options.maxStderrBufferSize,
-        startupTimeout: this.options.processStartupTimeout,
-      });
-
-      const client = new JsonRpcClient({
-        defaultTimeout: config.requestTimeout,
-        maxMessageSize: this.options.maxMessageSize,
-        maxPendingRequests: this.options.maxConcurrentRequests,
-      });
-
-      const session: StdioSession = {
-        connectionId,
-        process: processManager,
-        client,
-        state: 'connecting',
-        createdAt: new Date(),
-        serverCapabilities: {},
-        protocolVersion: '',
-      };
-
-      this.sessions.set(connectionId, session);
-
-      const connectionTimer = setTimeout(() => {
-        this.cleanupSession(connectionId, 'Connection timed out');
-      }, this.options.connectionTimeout);
-
-      client.setMessageHandler((message) => {
-        if (processManager.isRunning()) {
-          processManager.send(message);
-        }
-      });
-
-      processManager.spawn(
-        { command: config.command, args: config.args, env: config.env, cwd: config.cwd },
-        {
-          onStdout: (data: string) => {
-            client.handleData(data);
-          },
-          onStderr: (data: string) => {
-            this.onStderr(connectionId, data);
-          },
-          onExit: (code: number | null, signal: string | null) => {
-            clearTimeout(connectionTimer);
-            this.onProcessExit(connectionId, code, signal);
-          },
-          onError: (error: Error) => {
-            clearTimeout(connectionTimer);
-            this.onProcessError(connectionId, error);
-          },
-        },
-      );
-
-      const initResult = await client.request(
-        'initialize',
-        {
-          protocolVersion: MCP_PROTOCOL_VERSION,
-          capabilities: {},
-        },
-        this.options.initializeTimeout,
-      );
-
-      const initResponse = initResult.result as Record<string, unknown>;
-      const serverProtocolVersion = (initResponse.protocolVersion as string) ?? '';
-
-      if (serverProtocolVersion && serverProtocolVersion !== MCP_PROTOCOL_VERSION) {
-        this.onProtocolMismatch(connectionId, MCP_PROTOCOL_VERSION, serverProtocolVersion);
-      }
-
-      session.serverCapabilities =
-        (initResponse.serverCapabilities as Record<string, unknown>) ?? {};
-      session.protocolVersion = serverProtocolVersion;
-
-      client.notification('notifications/initialized');
-
-      session.state = 'connected';
-
-      clearTimeout(connectionTimer);
-
-      return {
-        success: true,
-        connectionId,
-        status: 'connected',
-      };
-    } catch (error) {
-      this.cleanupSession(
-        connectionId,
-        error instanceof Error ? error.message : 'Connection failed',
-      );
-
-      const message = error instanceof Error ? error.message : 'Connection failed';
-      return {
-        success: false,
-        connectionId,
-        status: 'failed',
-        error: message,
-      };
-    }
+    });
   }
 
   async disconnect(connectionId: string): Promise<DisconnectResult> {
-    if (!this.connectionRegistry) {
-      return super.disconnect(connectionId);
-    }
+    const start = process.hrtime();
+    const activeLogger = getLogger().child({ component: 'Transport' });
+    activeLogger.info({ args: [connectionId] }, 'Starting Transport.disconnect');
 
-    const session = this.sessions.get(connectionId);
-    if (!session) {
-      return {
-        success: true,
-        connectionId,
-        status: 'disconnected',
-      };
-    }
+    return traceSpan('Transport.disconnect', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'Transport');
+        span.setAttribute('method', 'disconnect');
+        span.setAttribute('connectionId', connectionId);
+      }
 
-    try {
-      session.state = 'disconnecting';
+      if (!this.connectionRegistry) {
+        const result = await super.disconnect(connectionId);
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.info({ durationMs }, 'Completed Transport.disconnect successfully');
+        return result;
+      }
 
-      session.client.close();
-      await session.process.kill(this.options.disconnectTimeout);
+      const session = this.sessions.get(connectionId);
+      if (!session) {
+        const result = {
+          success: true,
+          connectionId,
+          status: 'disconnected' as const,
+        };
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.info({ durationMs }, 'Completed Transport.disconnect successfully');
+        return result;
+      }
 
-      session.state = 'disconnected';
-      this.sessions.delete(connectionId);
+      try {
+        session.state = 'disconnecting';
 
-      return {
-        success: true,
-        connectionId,
-        status: 'disconnected',
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Disconnect failed';
-      session.state = 'failed';
+        session.client.close();
+        await session.process.kill(this.options.disconnectTimeout);
 
-      return {
-        success: false,
-        connectionId,
-        status: 'failed',
-        error: message,
-      };
-    }
+        session.state = 'disconnected';
+        this.sessions.delete(connectionId);
+
+        transportConnectionsGauge.set({ transport_type: 'stdio' }, this.sessions.size);
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.info({ durationMs }, 'Completed Transport.disconnect successfully');
+
+        return {
+          success: true,
+          connectionId,
+          status: 'disconnected',
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Disconnect failed';
+        session.state = 'failed';
+        transportConnectionsGauge.set({ transport_type: 'stdio' }, this.sessions.size);
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error({ durationMs, error }, `Error in Transport.disconnect: ${message}`);
+
+        return {
+          success: false,
+          connectionId,
+          status: 'failed',
+          error: message,
+        };
+      }
+    });
   }
 
   async getStatus(connectionId: string): Promise<TransportStatusResult> {
@@ -263,154 +345,196 @@ export class StdioTransport extends BaseTransport {
   }
 
   async discoverCapabilities(connectionId: string): Promise<DiscoverCapabilitiesResult> {
-    if (!this.connectionRegistry) {
-      return {
-        success: true,
-        connectionId,
-        capabilities: {
-          tools: [
-            {
-              name: 'calculate',
-              description: 'Perform mathematical calculations',
-              inputSchema: {
-                type: 'object',
-                properties: { expression: { type: 'string' } },
-              },
-            },
-            {
-              name: 'read_file',
-              description: 'Read contents of a file',
-              inputSchema: {
-                type: 'object',
-                properties: { path: { type: 'string' } },
-              },
-            },
-          ],
-          resources: [
-            {
-              name: 'Config',
-              uri: 'file:///data/config.json',
-              description: 'Application configuration',
-              mimeType: 'application/json',
-            },
-            {
-              name: 'Settings',
-              uri: 'file:///data/settings.json',
-              description: 'User settings',
-              mimeType: 'application/json',
-            },
-          ],
-          prompts: [
-            {
-              name: 'analyze_code',
-              description: 'Analyze source code',
-              arguments: [
-                { name: 'language', description: 'Programming language', required: true },
-              ],
-            },
-            {
-              name: 'review_changes',
-              description: 'Review code changes',
-              arguments: [{ name: 'diff', description: 'Git diff content', required: true }],
-            },
-          ],
-        },
-      };
-    }
+    const start = process.hrtime();
+    const activeLogger = getLogger().child({ component: 'Transport' });
+    activeLogger.debug({ args: [connectionId] }, 'Starting Transport.discoverCapabilities');
 
-    const session = this.sessions.get(connectionId);
-    if (!session || session.state !== 'connected') {
-      return {
-        success: false,
-        connectionId,
-        error: `Connection '${connectionId}' is not connected`,
-      };
-    }
-
-    try {
-      const capabilities = session.serverCapabilities;
-      const tools: Array<{
-        name: string;
-        description?: string;
-        inputSchema?: Record<string, unknown>;
-      }> = [];
-      const resources: Array<{
-        name: string;
-        uri: string;
-        description?: string;
-        mimeType?: string;
-      }> = [];
-      const prompts: Array<{
-        name: string;
-        description?: string;
-        arguments?: Array<{ name: string; description?: string; required?: boolean }>;
-      }> = [];
-
-      if (capabilities.tools !== false) {
-        const toolsResult = await session.client.request('tools/list');
-        const toolsData = toolsResult.result as { tools?: Array<Record<string, unknown>> };
-        if (toolsData.tools) {
-          for (const tool of toolsData.tools) {
-            tools.push({
-              name: tool.name as string,
-              description: tool.description as string | undefined,
-              inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
-            });
-          }
-        }
+    return traceSpan('Transport.discoverCapabilities', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'Transport');
+        span.setAttribute('method', 'discoverCapabilities');
+        span.setAttribute('connectionId', connectionId);
       }
 
-      if (capabilities.resources !== false) {
-        const resourcesResult = await session.client.request('resources/list');
-        const resourcesData = resourcesResult.result as {
-          resources?: Array<Record<string, unknown>>;
+      if (!this.connectionRegistry) {
+        const result = {
+          success: true,
+          connectionId,
+          capabilities: {
+            tools: [
+              {
+                name: 'calculate',
+                description: 'Perform mathematical calculations',
+                inputSchema: {
+                  type: 'object',
+                  properties: { expression: { type: 'string' } },
+                },
+              },
+              {
+                name: 'read_file',
+                description: 'Read contents of a file',
+                inputSchema: {
+                  type: 'object',
+                  properties: { path: { type: 'string' } },
+                },
+              },
+            ],
+            resources: [
+              {
+                name: 'Config',
+                uri: 'file:///data/config.json',
+                description: 'Application configuration',
+                mimeType: 'application/json',
+              },
+              {
+                name: 'Settings',
+                uri: 'file:///data/settings.json',
+                description: 'User settings',
+                mimeType: 'application/json',
+              },
+            ],
+            prompts: [
+              {
+                name: 'analyze_code',
+                description: 'Analyze source code',
+                arguments: [
+                  { name: 'language', description: 'Programming language', required: true },
+                ],
+              },
+              {
+                name: 'review_changes',
+                description: 'Review code changes',
+                arguments: [{ name: 'diff', description: 'Git diff content', required: true }],
+              },
+            ],
+          },
         };
-        if (resourcesData.resources) {
-          for (const resource of resourcesData.resources) {
-            resources.push({
-              name: resource.name as string,
-              uri: resource.uri as string,
-              description: resource.description as string | undefined,
-              mimeType: resource.mimeType as string | undefined,
-            });
-          }
-        }
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.debug({ durationMs }, 'Completed Transport.discoverCapabilities');
+        return result;
       }
 
-      if (capabilities.prompts !== false) {
-        const promptsResult = await session.client.request('prompts/list');
-        const promptsData = promptsResult.result as { prompts?: Array<Record<string, unknown>> };
-        if (promptsData.prompts) {
-          for (const prompt of promptsData.prompts) {
-            const args = (prompt.arguments as Array<Record<string, unknown>> | undefined)?.map(
-              (a) => ({
-                name: a.name as string,
-                description: a.description as string | undefined,
-                required: a.required as boolean | undefined,
-              }),
-            );
-            prompts.push({
-              name: prompt.name as string,
-              description: prompt.description as string | undefined,
-              arguments: args,
-            });
-          }
-        }
+      const session = this.sessions.get(connectionId);
+      if (!session || session.state !== 'connected') {
+        const result = {
+          success: false,
+          connectionId,
+          error: `Connection '${connectionId}' is not connected`,
+        };
+        transportFailures.inc({ transport: 'stdio', type: 'execution_failed' });
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error(
+          { durationMs, error: result.error },
+          `Error in Transport.discoverCapabilities: ${result.error}`,
+        );
+        return result;
       }
 
-      return {
-        success: true,
-        connectionId,
-        capabilities: { tools, resources, prompts },
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Capability discovery failed';
-      return {
-        success: false,
-        connectionId,
-        error: message,
-      };
-    }
+      try {
+        const capabilities = session.serverCapabilities;
+        const tools: Array<{
+          name: string;
+          description?: string;
+          inputSchema?: Record<string, unknown>;
+        }> = [];
+        const resources: Array<{
+          name: string;
+          uri: string;
+          description?: string;
+          mimeType?: string;
+        }> = [];
+        const prompts: Array<{
+          name: string;
+          description?: string;
+          arguments?: Array<{ name: string; description?: string; required?: boolean }>;
+        }> = [];
+
+        if (capabilities.tools !== false) {
+          const toolsResult = await session.client.request('tools/list');
+          const toolsData = toolsResult.result as { tools?: Array<Record<string, unknown>> };
+          if (toolsData.tools) {
+            for (const tool of toolsData.tools) {
+              tools.push({
+                name: tool.name as string,
+                description: tool.description as string | undefined,
+                inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
+              });
+            }
+          }
+        }
+
+        if (capabilities.resources !== false) {
+          const resourcesResult = await session.client.request('resources/list');
+          const resourcesData = resourcesResult.result as {
+            resources?: Array<Record<string, unknown>>;
+          };
+          if (resourcesData.resources) {
+            for (const resource of resourcesData.resources) {
+              resources.push({
+                name: resource.name as string,
+                uri: resource.uri as string,
+                description: resource.description as string | undefined,
+                mimeType: resource.mimeType as string | undefined,
+              });
+            }
+          }
+        }
+
+        if (capabilities.prompts !== false) {
+          const promptsResult = await session.client.request('prompts/list');
+          const promptsData = promptsResult.result as { prompts?: Array<Record<string, unknown>> };
+          if (promptsData.prompts) {
+            for (const prompt of promptsData.prompts) {
+              const args = (prompt.arguments as Array<Record<string, unknown>> | undefined)?.map(
+                (a) => ({
+                  name: a.name as string,
+                  description: a.description as string | undefined,
+                  required: a.required as boolean | undefined,
+                }),
+              );
+              prompts.push({
+                name: prompt.name as string,
+                description: prompt.description as string | undefined,
+                arguments: args,
+              });
+            }
+          }
+        }
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.debug({ durationMs }, 'Completed Transport.discoverCapabilities');
+
+        return {
+          success: true,
+          connectionId,
+          capabilities: { tools, resources, prompts },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Capability discovery failed';
+        const errMsg = message.toLowerCase();
+        if (errMsg.includes('protocol') || errMsg.includes('version')) {
+          transportProtocolErrors.inc({ transport: 'stdio' });
+        } else {
+          transportFailures.inc({ transport: 'stdio', type: 'execution_failed' });
+        }
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error(
+          { durationMs, error },
+          `Error in Transport.discoverCapabilities: ${message}`,
+        );
+
+        return {
+          success: false,
+          connectionId,
+          error: message,
+        };
+      }
+    });
   }
 
   async executeTool(
@@ -418,105 +542,196 @@ export class StdioTransport extends BaseTransport {
     toolName: string,
     args: Record<string, unknown>,
   ): Promise<TransportExecuteToolResult> {
-    if (!this.connectionRegistry) {
-      return {
-        success: true,
-        connectionId,
-        result: {
-          toolName,
-          args,
-          output: `Executed ${toolName} with args: ${JSON.stringify(args)}`,
-        },
-      };
-    }
+    const start = process.hrtime();
+    const activeLogger = getLogger().child({ component: 'Transport' });
+    activeLogger.debug(
+      { args: [connectionId, toolName, sanitize(args)] },
+      'Starting Transport.executeTool',
+    );
 
-    const session = this.sessions.get(connectionId);
-    if (!session || session.state !== 'connected') {
-      return {
-        success: false,
-        connectionId,
-        error: `Connection '${connectionId}' is not connected`,
-      };
-    }
+    return traceSpan('Transport.executeTool', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'Transport');
+        span.setAttribute('method', 'executeTool');
+        span.setAttribute('connectionId', connectionId);
+        span.setAttribute('toolName', toolName);
+      }
 
-    try {
-      const result = await session.client.request('tools/call', {
-        name: toolName,
-        arguments: args,
-      });
+      if (!this.connectionRegistry) {
+        const result = {
+          success: true,
+          connectionId,
+          result: {
+            toolName,
+            args,
+            output: `Executed ${toolName} with args: ${JSON.stringify(args)}`,
+          },
+        };
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.debug({ durationMs }, 'Completed Transport.executeTool');
+        return result;
+      }
 
-      return {
-        success: true,
-        connectionId,
-        result: result.result,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Tool execution failed';
-      return {
-        success: false,
-        connectionId,
-        error: message,
-      };
-    }
+      const session = this.sessions.get(connectionId);
+      if (!session || session.state !== 'connected') {
+        const result = {
+          success: false,
+          connectionId,
+          error: `Connection '${connectionId}' is not connected`,
+        };
+        transportFailures.inc({ transport: 'stdio', type: 'execution_failed' });
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error(
+          { durationMs, error: result.error },
+          `Error in Transport.executeTool: ${result.error}`,
+        );
+        return result;
+      }
+
+      try {
+        const result = await session.client.request('tools/call', {
+          name: toolName,
+          arguments: args,
+        });
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.debug({ durationMs }, 'Completed Transport.executeTool');
+
+        return {
+          success: true,
+          connectionId,
+          result: result.result,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Tool execution failed';
+        const errMsg = message.toLowerCase();
+        if (errMsg.includes('protocol') || errMsg.includes('version')) {
+          transportProtocolErrors.inc({ transport: 'stdio' });
+        } else {
+          transportFailures.inc({ transport: 'stdio', type: 'execution_failed' });
+        }
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error({ durationMs, error }, `Error in Transport.executeTool: ${message}`);
+
+        return {
+          success: false,
+          connectionId,
+          error: message,
+        };
+      }
+    });
   }
 
   async readResource(
     connectionId: string,
     resourceName: string,
   ): Promise<TransportReadResourceResult> {
-    if (!this.connectionRegistry) {
-      const resourceContents: Record<string, unknown> = {
-        Config: { setting: 'value', environment: 'production' },
-        Settings: { theme: 'dark', language: 'en' },
-      };
+    const start = process.hrtime();
+    const activeLogger = getLogger().child({ component: 'Transport' });
+    activeLogger.debug({ args: [connectionId, resourceName] }, 'Starting Transport.readResource');
 
-      return {
-        success: true,
-        connectionId,
-        contents: resourceContents[resourceName] ?? {
-          message: `Resource '${resourceName}' not found`,
-        },
-      };
-    }
+    return traceSpan('Transport.readResource', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'Transport');
+        span.setAttribute('method', 'readResource');
+        span.setAttribute('connectionId', connectionId);
+        span.setAttribute('resourceName', resourceName);
+      }
 
-    const session = this.sessions.get(connectionId);
-    if (!session || session.state !== 'connected') {
-      return {
-        success: false,
-        connectionId,
-        error: `Connection '${connectionId}' is not connected`,
-      };
-    }
+      if (!this.connectionRegistry) {
+        const resourceContents: Record<string, unknown> = {
+          Config: { setting: 'value', environment: 'production' },
+          Settings: { theme: 'dark', language: 'en' },
+        };
 
-    try {
-      const listResult = await session.client.request('resources/list');
-      const listData = listResult.result as { resources?: Array<Record<string, unknown>> };
-      const resource = listData.resources?.find((r) => r.name === resourceName);
+        const result = {
+          success: true,
+          connectionId,
+          contents: resourceContents[resourceName] ?? {
+            message: `Resource '${resourceName}' not found`,
+          },
+        };
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.debug({ durationMs }, 'Completed Transport.readResource');
+        return result;
+      }
 
-      if (!resource) {
+      const session = this.sessions.get(connectionId);
+      if (!session || session.state !== 'connected') {
+        const result = {
+          success: false,
+          connectionId,
+          error: `Connection '${connectionId}' is not connected`,
+        };
+        transportFailures.inc({ transport: 'stdio', type: 'execution_failed' });
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error(
+          { durationMs, error: result.error },
+          `Error in Transport.readResource: ${result.error}`,
+        );
+        return result;
+      }
+
+      try {
+        const listResult = await session.client.request('resources/list');
+        const listData = listResult.result as { resources?: Array<Record<string, unknown>> };
+        const resource = listData.resources?.find((r) => r.name === resourceName);
+
+        if (!resource) {
+          const result = {
+            success: false,
+            connectionId,
+            error: `Resource '${resourceName}' not found`,
+          };
+          transportFailures.inc({ transport: 'stdio', type: 'execution_failed' });
+          const diff = process.hrtime(start);
+          const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+          activeLogger.error(
+            { durationMs, error: result.error },
+            `Error in Transport.readResource: ${result.error}`,
+          );
+          return result;
+        }
+
+        const uri = resource.uri as string;
+        const readResult = await session.client.request('resources/read', { uri });
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.debug({ durationMs }, 'Completed Transport.readResource');
+
+        return {
+          success: true,
+          connectionId,
+          contents: readResult.result,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Resource retrieval failed';
+        const errMsg = message.toLowerCase();
+        if (errMsg.includes('protocol') || errMsg.includes('version')) {
+          transportProtocolErrors.inc({ transport: 'stdio' });
+        } else {
+          transportFailures.inc({ transport: 'stdio', type: 'execution_failed' });
+        }
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error({ durationMs, error }, `Error in Transport.readResource: ${message}`);
+
         return {
           success: false,
           connectionId,
-          error: `Resource '${resourceName}' not found`,
+          error: message,
         };
       }
-
-      const uri = resource.uri as string;
-      const readResult = await session.client.request('resources/read', { uri });
-
-      return {
-        success: true,
-        connectionId,
-        contents: readResult.result,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Resource retrieval failed';
-      return {
-        success: false,
-        connectionId,
-        error: message,
-      };
-    }
+    });
   }
 
   async executePrompt(
@@ -524,46 +739,89 @@ export class StdioTransport extends BaseTransport {
     promptName: string,
     args: Record<string, unknown>,
   ): Promise<TransportExecutePromptResult> {
-    if (!this.connectionRegistry) {
-      return {
-        success: true,
-        connectionId,
-        result: {
-          promptName,
-          args,
-          response: `Prompt '${promptName}' executed with args: ${JSON.stringify(args)}`,
-        },
-      };
-    }
+    const start = process.hrtime();
+    const activeLogger = getLogger().child({ component: 'Transport' });
+    activeLogger.debug(
+      { args: [connectionId, promptName, sanitize(args)] },
+      'Starting Transport.executePrompt',
+    );
 
-    const session = this.sessions.get(connectionId);
-    if (!session || session.state !== 'connected') {
-      return {
-        success: false,
-        connectionId,
-        error: `Connection '${connectionId}' is not connected`,
-      };
-    }
+    return traceSpan('Transport.executePrompt', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'Transport');
+        span.setAttribute('method', 'executePrompt');
+        span.setAttribute('connectionId', connectionId);
+        span.setAttribute('promptName', promptName);
+      }
 
-    try {
-      const result = await session.client.request('prompts/get', {
-        name: promptName,
-        arguments: args,
-      });
+      if (!this.connectionRegistry) {
+        const result = {
+          success: true,
+          connectionId,
+          result: {
+            promptName,
+            args,
+            response: `Prompt '${promptName}' executed with args: ${JSON.stringify(args)}`,
+          },
+        };
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.debug({ durationMs }, 'Completed Transport.executePrompt');
+        return result;
+      }
 
-      return {
-        success: true,
-        connectionId,
-        result: result.result,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Prompt execution failed';
-      return {
-        success: false,
-        connectionId,
-        error: message,
-      };
-    }
+      const session = this.sessions.get(connectionId);
+      if (!session || session.state !== 'connected') {
+        const result = {
+          success: false,
+          connectionId,
+          error: `Connection '${connectionId}' is not connected`,
+        };
+        transportFailures.inc({ transport: 'stdio', type: 'execution_failed' });
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error(
+          { durationMs, error: result.error },
+          `Error in Transport.executePrompt: ${result.error}`,
+        );
+        return result;
+      }
+
+      try {
+        const result = await session.client.request('prompts/get', {
+          name: promptName,
+          arguments: args,
+        });
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.debug({ durationMs }, 'Completed Transport.executePrompt');
+
+        return {
+          success: true,
+          connectionId,
+          result: result.result,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Prompt execution failed';
+        const errMsg = message.toLowerCase();
+        if (errMsg.includes('protocol') || errMsg.includes('version')) {
+          transportProtocolErrors.inc({ transport: 'stdio' });
+        } else {
+          transportFailures.inc({ transport: 'stdio', type: 'execution_failed' });
+        }
+
+        const diff = process.hrtime(start);
+        const durationMs = (diff[0] + diff[1] / 1e9) * 1000;
+        activeLogger.error({ durationMs, error }, `Error in Transport.executePrompt: ${message}`);
+
+        return {
+          success: false,
+          connectionId,
+          error: message,
+        };
+      }
+    });
   }
 
   supportsCapability(capability: string): boolean {
