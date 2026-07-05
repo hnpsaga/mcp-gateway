@@ -1,0 +1,158 @@
+name: Docker Verify
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  docker-verify:
+    name: Build & Smoke-Test Docker Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 2. Set up Docker Buildx
+      # -----------------------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # -----------------------------------------------------------------------
+      # 3. Build Docker image (no push)
+      # -----------------------------------------------------------------------
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: mcp-gateway:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # -----------------------------------------------------------------------
+      # 4. Start container for smoke tests
+      # -----------------------------------------------------------------------
+      - name: Start container
+        run: |
+          docker run -d \
+            --name mcp-gateway-ci \
+            -p 3000:3000 \
+            -e NODE_ENV=production \
+            -e HOST=0.0.0.0 \
+            -e PORT=3000 \
+            -e AUTH_ENABLED=false \
+            -e LOG_LEVEL=info \
+            mcp-gateway:ci
+
+      # -----------------------------------------------------------------------
+      # 5. Wait for the container to become healthy
+      # -----------------------------------------------------------------------
+      - name: Wait for container to be healthy
+        run: |
+          echo "Waiting for container to become healthy..."
+          for i in $(seq 1 30); do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' mcp-gateway-ci 2>/dev/null || echo "starting")
+            echo "  [${i}/30] health = ${STATUS}"
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Container is healthy!"
+              break
+            fi
+            if [ "$STATUS" = "unhealthy" ]; then
+              echo "Container became unhealthy!" >&2
+              docker logs mcp-gateway-ci >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          # Final check
+          STATUS=$(docker inspect --format='{{.State.Health.Status}}' mcp-gateway-ci)
+          if [ "$STATUS" != "healthy" ]; then
+            echo "Container did not become healthy in time (status: ${STATUS})" >&2
+            docker logs mcp-gateway-ci >&2
+            exit 1
+          fi
+
+      # -----------------------------------------------------------------------
+      # 6. Smoke-test /health endpoint
+      # -----------------------------------------------------------------------
+      - name: Smoke-test /health endpoint
+        run: |
+          RESP=$(curl -sf http://localhost:3000/health)
+          echo "Response: $RESP"
+          echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['status']=='ok', f'unexpected status: {d}'"
+          echo "/health OK"
+
+      # -----------------------------------------------------------------------
+      # 7. Smoke-test /ready endpoint
+      # -----------------------------------------------------------------------
+      - name: Smoke-test /ready endpoint
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/ready)
+          echo "/ready HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "/ready returned unexpected status: $HTTP_CODE" >&2
+            exit 1
+          fi
+          echo "/ready OK"
+
+      # -----------------------------------------------------------------------
+      # 8. Smoke-test /metrics endpoint
+      # -----------------------------------------------------------------------
+      - name: Smoke-test /metrics endpoint
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/metrics)
+          echo "/metrics HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "/metrics returned unexpected status: $HTTP_CODE" >&2
+            exit 1
+          fi
+          echo "/metrics OK"
+
+      # -----------------------------------------------------------------------
+      # 9. Verify graceful SIGTERM shutdown
+      # -----------------------------------------------------------------------
+      - name: Verify graceful shutdown (SIGTERM)
+        run: |
+          echo "Sending SIGTERM to container..."
+          docker kill --signal=SIGTERM mcp-gateway-ci
+          # Wait up to 15 s for graceful exit (exit code 0 or 143)
+          for i in $(seq 1 15); do
+            STATUS=$(docker inspect --format='{{.State.Status}}' mcp-gateway-ci 2>/dev/null)
+            if [ "$STATUS" = "exited" ]; then
+              EXIT_CODE=$(docker inspect --format='{{.State.ExitCode}}' mcp-gateway-ci)
+              echo "Container exited with code: $EXIT_CODE"
+              # 0 = clean, 143 = SIGTERM (128+15) – both acceptable
+              if [ "$EXIT_CODE" = "0" ] || [ "$EXIT_CODE" = "143" ]; then
+                echo "Graceful shutdown verified."
+                exit 0
+              else
+                echo "Unexpected exit code: $EXIT_CODE" >&2
+                docker logs mcp-gateway-ci >&2
+                exit 1
+              fi
+            fi
+            echo "  [${i}/15] container status = ${STATUS}, waiting..."
+            sleep 1
+          done
+          echo "Container did not shut down within 15 s" >&2
+          docker logs mcp-gateway-ci >&2
+          exit 1
+
+      # -----------------------------------------------------------------------
+      # 10. Dump logs on failure
+      # -----------------------------------------------------------------------
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs mcp-gateway-ci || true
