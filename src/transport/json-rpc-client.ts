@@ -283,15 +283,15 @@ export class JsonRpcClient {
     }
 
     if (msg.id !== undefined && msg.id !== null && typeof msg.method === 'string') {
-      const errorResponse = {
+      const errorResponse: JsonRpcErrorResponse = {
         jsonrpc: '2.0',
-        id: msg.id,
+        id: typeof msg.id === 'number' ? msg.id : 0,
         error: {
           code: -32601,
           message: `Method not found: ${msg.method}`,
         },
       };
-      this.sendMessage(errorResponse as JsonRpcRequest);
+      this.messageHandler(JSON.stringify(errorResponse) + '\n');
       return;
     }
 
