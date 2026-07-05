@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+
 import { config } from './config/env.js';
 
 export async function startServer(app: FastifyInstance): Promise<void> {
