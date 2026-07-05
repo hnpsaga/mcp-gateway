@@ -1,5 +1,10 @@
 import { BaseTransport } from './base-transport.js';
-import type { DiscoverCapabilitiesResult } from './transport-result.js';
+import type {
+  DiscoverCapabilitiesResult,
+  TransportExecutePromptResult,
+  TransportExecuteToolResult,
+  TransportReadResourceResult,
+} from './transport-result.js';
 
 export class StdioTransport extends BaseTransport {
   async discoverCapabilities(connectionId: string): Promise<DiscoverCapabilitiesResult> {
@@ -51,6 +56,56 @@ export class StdioTransport extends BaseTransport {
             arguments: [{ name: 'diff', description: 'Git diff content', required: true }],
           },
         ],
+      },
+    };
+  }
+
+  async executeTool(
+    connectionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<TransportExecuteToolResult> {
+    return {
+      success: true,
+      connectionId,
+      result: {
+        toolName,
+        args,
+        output: `Executed ${toolName} with args: ${JSON.stringify(args)}`,
+      },
+    };
+  }
+
+  async readResource(
+    connectionId: string,
+    resourceName: string,
+  ): Promise<TransportReadResourceResult> {
+    const resourceContents: Record<string, unknown> = {
+      Config: { setting: 'value', environment: 'production' },
+      Settings: { theme: 'dark', language: 'en' },
+    };
+
+    return {
+      success: true,
+      connectionId,
+      contents: resourceContents[resourceName] ?? {
+        message: `Resource '${resourceName}' not found`,
+      },
+    };
+  }
+
+  async executePrompt(
+    connectionId: string,
+    promptName: string,
+    args: Record<string, unknown>,
+  ): Promise<TransportExecutePromptResult> {
+    return {
+      success: true,
+      connectionId,
+      result: {
+        promptName,
+        args,
+        response: `Prompt '${promptName}' executed with args: ${JSON.stringify(args)}`,
       },
     };
   }

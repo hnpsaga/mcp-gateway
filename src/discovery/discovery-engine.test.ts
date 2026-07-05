@@ -100,6 +100,9 @@ describe('DiscoveryEngine', () => {
         disconnect: vi.fn(),
         getStatus: vi.fn(),
         discoverCapabilities: vi.fn(),
+        executeTool: vi.fn(),
+        readResource: vi.fn(),
+        executePrompt: vi.fn(),
         supportsCapability: vi.fn().mockReturnValue(false),
       };
 
@@ -368,6 +371,9 @@ describe('DiscoveryEngine', () => {
             prompts: [],
           },
         }),
+        executeTool: vi.fn(),
+        readResource: vi.fn(),
+        executePrompt: vi.fn(),
         supportsCapability: vi.fn().mockReturnValue(true),
       };
 

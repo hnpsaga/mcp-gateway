@@ -1,5 +1,10 @@
 import { BaseTransport } from './base-transport.js';
-import type { DiscoverCapabilitiesResult } from './transport-result.js';
+import type {
+  DiscoverCapabilitiesResult,
+  TransportExecutePromptResult,
+  TransportExecuteToolResult,
+  TransportReadResourceResult,
+} from './transport-result.js';
 
 export class StreamableHttpTransport extends BaseTransport {
   async discoverCapabilities(connectionId: string): Promise<DiscoverCapabilitiesResult> {
@@ -57,6 +62,56 @@ export class StreamableHttpTransport extends BaseTransport {
             ],
           },
         ],
+      },
+    };
+  }
+
+  async executeTool(
+    connectionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<TransportExecuteToolResult> {
+    return {
+      success: true,
+      connectionId,
+      result: {
+        toolName,
+        args,
+        output: `HTTP transport executed ${toolName}`,
+      },
+    };
+  }
+
+  async readResource(
+    connectionId: string,
+    resourceName: string,
+  ): Promise<TransportReadResourceResult> {
+    const resourceContents: Record<string, unknown> = {
+      'Weather API': { temperature: 22, condition: 'sunny', humidity: 0.45 },
+      'Search API': { results: ['result 1', 'result 2'], total: 42 },
+    };
+
+    return {
+      success: true,
+      connectionId,
+      contents: resourceContents[resourceName] ?? {
+        message: `Resource '${resourceName}' not found`,
+      },
+    };
+  }
+
+  async executePrompt(
+    connectionId: string,
+    promptName: string,
+    args: Record<string, unknown>,
+  ): Promise<TransportExecutePromptResult> {
+    return {
+      success: true,
+      connectionId,
+      result: {
+        promptName,
+        args,
+        response: `HTTP transport executed prompt '${promptName}'`,
       },
     };
   }

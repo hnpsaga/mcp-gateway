@@ -54,3 +54,24 @@ export interface DiscoverCapabilitiesResult {
   };
   error?: string;
 }
+
+export interface TransportExecuteToolResult {
+  success: boolean;
+  connectionId: string;
+  result?: unknown;
+  error?: string;
+}
+
+export interface TransportReadResourceResult {
+  success: boolean;
+  connectionId: string;
+  contents?: unknown;
+  error?: string;
+}
+
+export interface TransportExecutePromptResult {
+  success: boolean;
+  connectionId: string;
+  result?: unknown;
+  error?: string;
+}
