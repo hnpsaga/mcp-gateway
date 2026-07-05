@@ -8,6 +8,12 @@
     "node": ">=22.0.0"
   },
   "packageManager": "pnpm@10.0.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
@@ -20,6 +26,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
     "prepare": "husky"
   },
   "keywords": [],
@@ -28,14 +37,18 @@
   "dependencies": {
     "@fastify/swagger": "^9.7.0",
     "@fastify/swagger-ui": "^6.0.0",
+    "better-sqlite3": "^12.11.1",
     "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
     "fastify": "^5.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.0",
     "@vitest/coverage-v8": "^4.1.9",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-simple-import-sort": "^13.0.0",
