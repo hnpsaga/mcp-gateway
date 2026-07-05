@@ -1,0 +1,88 @@
+version: '3.9'
+
+services:
+  mcp-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp-gateway:latest
+    container_name: mcp-gateway
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+
+    # Persistent storage for SQLite database
+    volumes:
+      - mcp-gateway-data:/app/data
+
+    # Load optional .env file (ignored if missing)
+    env_file:
+      - path: .env
+        required: false
+
+    # Production-ready environment overrides
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+
+      # Logging
+      LOG_LEVEL: info
+      LOG_PRETTY: 'false'
+      LOG_STRUCTURED: 'true'
+
+      # Metrics
+      METRICS_ENABLED: 'true'
+
+      # OpenTelemetry (disabled by default – set OTEL_ENABLED=true to enable)
+      OTEL_ENABLED: 'false'
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+      # Database
+      DATABASE_PATH: /app/data
+      DATABASE_FILENAME: mcp-gateway.db
+      DATABASE_WAL_MODE: 'true'
+      DATABASE_BUSY_TIMEOUT: '5000'
+
+      # Authentication (disabled by default – set AUTH_ENABLED=true to secure the API)
+      AUTH_ENABLED: 'false'
+      # API_KEYS: your-secret-key-1,your-secret-key-2
+      AUTH_HEADER_NAME: x-api-key
+      AUTH_BEARER_ENABLED: 'false'
+      AUTH_SWAGGER_AUTHENTICATE: 'false'
+
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+    # Resource limits (uncomment and adjust for your environment)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.0'
+    #       memory: 512M
+    #     reservations:
+    #       cpus: '0.25'
+    #       memory: 128M
+
+    networks:
+      - mcp-network
+
+# Named volume so data persists across container recreations
+volumes:
+  mcp-gateway-data:
+    driver: local
+
+# Isolated network – attach additional services (reverse proxy, OTEL collector) here
+networks:
+  mcp-network:
+    driver: bridge
