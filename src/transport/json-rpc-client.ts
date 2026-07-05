@@ -1,4 +1,4 @@
-import { InternalError } from '../shared/errors/index.js';
+import { InternalError, ValidationError } from '../shared/errors/index.js';
 
 export interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -44,6 +44,23 @@ export class JsonRpcTimeoutError extends InternalError {
   }
 }
 
+export class JsonRpcParseError extends InternalError {
+  constructor(message: string, details?: unknown) {
+    super(`JSON-RPC parse error: ${message}`, details);
+    this.name = 'JsonRpcParseError';
+  }
+}
+
+export class JsonRpcMessageTooLargeError extends ValidationError {
+  constructor(size: number, maxSize: number) {
+    super(`JSON-RPC message exceeds maximum size: ${size} bytes (max: ${maxSize} bytes)`, {
+      size,
+      maxSize,
+    });
+    this.name = 'JsonRpcMessageTooLargeError';
+  }
+}
+
 export type OutgoingMessageHandler = (message: string) => void;
 
 interface PendingRequest {
@@ -51,15 +68,35 @@ interface PendingRequest {
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
   method: string;
+  createdAt: number;
+}
+
+export interface JsonRpcClientConfig {
+  defaultTimeout?: number;
+  maxMessageSize?: number;
+  maxPendingRequests?: number;
 }
 
 export class JsonRpcClient {
   private nextId = 1;
   private pendingRequests = new Map<number, PendingRequest>();
   private readonly defaultTimeout: number;
+  private readonly maxMessageSize: number;
+  private readonly maxPendingRequests: number;
+  private seenIds = new Set<number>();
+  private totalBytesReceived = 0;
+  private closed = false;
 
-  constructor(defaultTimeout = 30000) {
-    this.defaultTimeout = defaultTimeout;
+  constructor(config?: number | JsonRpcClientConfig) {
+    if (typeof config === 'number' || config === undefined) {
+      this.defaultTimeout = config ?? 30000;
+      this.maxMessageSize = 1048576;
+      this.maxPendingRequests = 100;
+    } else {
+      this.defaultTimeout = config.defaultTimeout ?? 30000;
+      this.maxMessageSize = config.maxMessageSize ?? 1048576;
+      this.maxPendingRequests = config.maxPendingRequests ?? 100;
+    }
   }
 
   async request(
@@ -67,19 +104,36 @@ export class JsonRpcClient {
     params?: unknown,
     timeout?: number,
   ): Promise<JsonRpcSuccessResponse> {
+    if (this.closed) {
+      throw new InternalError('Cannot send request: JSON-RPC client is closed', { method });
+    }
+
+    if (this.pendingRequests.size >= this.maxPendingRequests) {
+      throw new InternalError(
+        `Too many pending requests: ${this.pendingRequests.size} (max: ${this.maxPendingRequests})`,
+        { method, pendingCount: this.pendingRequests.size, maxPending: this.maxPendingRequests },
+      );
+    }
+
     const id = this.nextId++;
     const requestTimeout = timeout ?? this.defaultTimeout;
 
     return new Promise<JsonRpcSuccessResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
+        this.seenIds.delete(id);
         reject(new JsonRpcTimeoutError(method, requestTimeout));
       }, requestTimeout);
 
       this.pendingRequests.set(id, {
         resolve: (response: JsonRpcResponse) => {
           clearTimeout(timer);
-          resolve(response as JsonRpcSuccessResponse);
+          if ('result' in response) {
+            resolve(response);
+          } else {
+            const err = response.error;
+            reject(new JsonRpcError(err.code, err.message, err.data));
+          }
         },
         reject: (error: Error) => {
           clearTimeout(timer);
@@ -87,6 +141,7 @@ export class JsonRpcClient {
         },
         timer,
         method,
+        createdAt: Date.now(),
       });
 
       this.sendMessage({ jsonrpc: '2.0', id, method, params });
@@ -94,14 +149,27 @@ export class JsonRpcClient {
   }
 
   notification(method: string, params?: unknown): void {
-    this.sendMessage({ jsonrpc: '2.0', method, params } as JsonRpcRequest);
+    if (this.closed) return;
+    const msg = { jsonrpc: '2.0' as const, method, params };
+    this.sendMessage(msg as JsonRpcRequest);
   }
 
   handleData(data: string): void {
+    const totalBytes = Buffer.byteLength(data, 'utf-8');
+    this.totalBytesReceived += totalBytes;
+
+    if (totalBytes > this.maxMessageSize) {
+      return;
+    }
+
     const lines = data.split('\n');
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
+
+      if (Buffer.byteLength(trimmed, 'utf-8') > this.maxMessageSize) {
+        continue;
+      }
 
       let messages: unknown[];
       try {
@@ -118,15 +186,29 @@ export class JsonRpcClient {
   }
 
   close(): void {
-    for (const [id, pending] of this.pendingRequests) {
+    if (this.closed) return;
+    this.closed = true;
+
+    const error = new InternalError('JSON-RPC client closed before receiving response');
+    for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timer);
-      pending.reject(new InternalError(`JSON-RPC client closed before receiving response`, { id }));
+      pending.reject(error);
     }
     this.pendingRequests.clear();
+    this.seenIds.clear();
   }
 
   pendingCount(): number {
     return this.pendingRequests.size;
+  }
+
+  isClosed(): boolean {
+    return this.closed;
+  }
+
+  resetStats(): void {
+    this.totalBytesReceived = 0;
+    this.seenIds.clear();
   }
 
   private sendMessage(request: JsonRpcRequest): void {
@@ -141,7 +223,16 @@ export class JsonRpcClient {
 
     if (msg.jsonrpc !== '2.0') return;
 
-    if (typeof msg.id === 'number' && this.pendingRequests.has(msg.id)) {
+    if (typeof msg.id !== 'number') {
+      return;
+    }
+
+    if (this.seenIds.has(msg.id)) {
+      return;
+    }
+
+    if (this.pendingRequests.has(msg.id)) {
+      this.seenIds.add(msg.id);
       const pending = this.pendingRequests.get(msg.id)!;
 
       if ('result' in msg) {
@@ -151,7 +242,7 @@ export class JsonRpcClient {
         pending.reject(new JsonRpcError(error.code, error.message, error.data));
       } else {
         pending.reject(
-          new InternalError('Invalid JSON-RPC response: missing result and error', { msg }),
+          new JsonRpcParseError('Invalid JSON-RPC response: missing result and error', { msg }),
         );
       }
 

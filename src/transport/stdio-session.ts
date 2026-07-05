@@ -11,4 +11,5 @@ export interface StdioSession {
   createdAt: Date;
   serverCapabilities: Record<string, unknown>;
   protocolVersion: string;
+  stderrOutput?: string;
 }

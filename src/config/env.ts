@@ -7,6 +7,17 @@ const configSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().int().positive().max(65535).default(3000),
   HOST: z.string().default('127.0.0.1'),
+
+  // Transport configuration
+  TRANSPORT_LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  TRANSPORT_MAX_MESSAGE_SIZE: z.coerce.number().int().positive().default(1048576), // 1MB
+  TRANSPORT_STDOUT_BUFFER_SIZE: z.coerce.number().int().positive().default(10485760), // 10MB
+  TRANSPORT_STDERR_BUFFER_SIZE: z.coerce.number().int().positive().default(1048576), // 1MB
+  TRANSPORT_MAX_CONCURRENT_REQUESTS: z.coerce.number().int().positive().default(100),
+  TRANSPORT_PROCESS_STARTUP_TIMEOUT: z.coerce.number().int().positive().default(15000), // 15s
+  TRANSPORT_INITIALIZE_TIMEOUT: z.coerce.number().int().positive().default(15000), // 15s
+  TRANSPORT_CONNECTION_TIMEOUT: z.coerce.number().int().positive().default(30000), // 30s
+  TRANSPORT_DISCONNECT_TIMEOUT: z.coerce.number().int().positive().default(5000), // 5s
 });
 
 const parsed = configSchema.safeParse({
