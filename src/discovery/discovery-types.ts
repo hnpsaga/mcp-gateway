@@ -28,3 +28,11 @@ export interface DiscoveryResult {
   prompts: Prompt[];
   discoveredAt: Date;
 }
+
+export interface CachedDiscoverySummary {
+  connectionId: string;
+  discoveredAt: Date;
+  toolsCount: number;
+  resourcesCount: number;
+  promptsCount: number;
+}

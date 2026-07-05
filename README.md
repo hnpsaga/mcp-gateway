@@ -242,6 +242,125 @@ All Connection Management endpoints are documented in the generated OpenAPI spec
 
 ---
 
+## Discovery API
+
+The Discovery API is available under `/api/v1/discovery`. It exposes the Discovery Engine through REST endpoints, providing access to MCP server capability discovery and caching.
+
+### Discovery Workflow
+
+1. A connection is created via the Connection Management API.
+2. Discovery is triggered against that connection via `POST /api/v1/discovery/:connectionId`.
+3. The Discovery Engine validates the connection exists, requests capabilities from the transport layer, validates the response, and caches the result.
+4. Subsequent requests can retrieve cached results without triggering a new discovery.
+5. The cache can be refreshed, cleared per connection, or listed for an overview.
+
+### Cache Behavior
+
+- Discovery results are cached in memory after the first successful discovery.
+- Cached results are returned by `GET /api/v1/discovery/:connectionId` without triggering transport communication.
+- `POST /api/v1/discovery/:connectionId/refresh` forces a new discovery and replaces the cached result.
+- `DELETE /api/v1/discovery/:connectionId` clears the cache entry without affecting the connection definition.
+- A `GET /api/v1/discovery` returns a summary of all cached entries.
+
+### Endpoint Overview
+
+| Method   | Path                                      | Description                         |
+| :------- | :---------------------------------------- | :---------------------------------- |
+| `POST`   | `/api/v1/discovery/:connectionId`         | Trigger capability discovery        |
+| `GET`    | `/api/v1/discovery/:connectionId`         | Retrieve cached discovery results   |
+| `POST`   | `/api/v1/discovery/:connectionId/refresh` | Force a fresh discovery             |
+| `DELETE` | `/api/v1/discovery/:connectionId`         | Clear cached discovery              |
+| `GET`    | `/api/v1/discovery`                       | List all cached discovery summaries |
+
+### Example: Discover Capabilities
+
+```http
+POST /api/v1/discovery/:connectionId
+```
+
+**Response (200):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "connectionId": "uuid",
+    "tools": [
+      { "name": "calculate", "description": "Perform mathematical calculations", "inputSchema": {} }
+    ],
+    "resources": [
+      { "name": "Config", "uri": "file:///data/config.json", "mimeType": "application/json" }
+    ],
+    "prompts": [{ "name": "analyze_code", "description": "Analyze source code", "arguments": [] }],
+    "discoveredAt": "2026-01-01T00:00:00.000Z"
+  }
+}
+```
+
+### Example: Get Cached Discovery
+
+```http
+GET /api/v1/discovery/:connectionId
+```
+
+Returns the same structure as discover. Returns **404** if discovery has never been performed.
+
+### Example: Refresh Discovery
+
+```http
+POST /api/v1/discovery/:connectionId/refresh
+```
+
+Forces a new discovery operation, replaces the cached result, and returns the refreshed capabilities.
+
+### Example: Clear Discovery Cache
+
+```http
+DELETE /api/v1/discovery/:connectionId
+```
+
+**Response (200):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Discovery cache cleared for connection 'uuid'"
+  }
+}
+```
+
+### Example: List Cache
+
+```http
+GET /api/v1/discovery
+```
+
+**Response (200):**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "connectionId": "uuid-1",
+      "discoveredAt": "2026-01-01T00:00:00.000Z",
+      "toolsCount": 2,
+      "resourcesCount": 2,
+      "promptsCount": 2
+    }
+  ]
+}
+```
+
+The list endpoint returns only high-level metadata without duplicating full capability definitions.
+
+### Swagger Usage
+
+All Discovery endpoints are documented in the generated OpenAPI specification. Visit `/documentation` for the Swagger UI or `/documentation/json` for the raw OpenAPI spec.
+
+---
+
 ## Available Scripts
 
 | Script               | Description                                                   |
