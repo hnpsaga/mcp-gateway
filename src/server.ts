@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 
-import { config } from './config/env.js';
+import { config } from './config/index.js';
 
 export async function startServer(app: FastifyInstance): Promise<void> {
   const exitSignals = ['SIGINT', 'SIGTERM'];

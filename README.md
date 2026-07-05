@@ -138,21 +138,27 @@ This project enforces high-quality standards through automated pre-commit gates:
 │   └── workflows/
 │       └── ci.yml        # GitHub Actions CI pipeline
 ├── .husky/               # Git hook handlers (e.g., pre-commit)
+├── docs/                 # Architecture & design documentation
 ├── src/
 │   ├── ai/               # Future: AI provider integrations
 │   ├── config/
-│   │   └── env.ts        # Configuration Schema & Loading (Zod)
+│   │   ├── env.ts        # Environment config schema & validation (Zod)
+│   │   └── index.ts      # Centralized configuration access
 │   ├── connections/      # Future: MCP server connections
 │   ├── discovery/        # Future: Service discovery
 │   ├── execution/        # Future: Tool execution engine
 │   ├── operations/       # Future: Operational workflows
 │   ├── routes/
 │   │   └── health.ts     # Routes definition (Health check)
-│   ├── shared/           # Future: Shared utilities
+│   ├── shared/
+│   │   ├── errors/       # Application error hierarchy
+│   │   ├── response/     # Reusable response models
+│   │   ├── constants.ts  # Shared constants
+│   │   └── index.ts      # Shared module entry
 │   ├── transport/        # Future: MCP transport layer
 │   ├── types/            # Future: Shared type definitions
-│   ├── app.ts            # Fastify Instance builder & Global Error Handler
-│   ├── app.test.ts       # Health endpoint and application tests
+│   ├── app.ts            # Fastify instance builder & global error handler
+│   ├── app.test.ts       # Application and health endpoint tests
 │   ├── server.ts         # Server listen & graceful shutdown logic
 │   ├── server.test.ts    # Server startup & process event tests
 │   └── index.ts          # Application entrypoint

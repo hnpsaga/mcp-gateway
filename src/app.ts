@@ -1,26 +1,40 @@
 import fastify, { FastifyInstance } from 'fastify';
 
 import { healthRoutes } from './routes/health.js';
+import { AppError } from './shared/errors/app-error.js';
+import type { ErrorResponse } from './shared/response/error-response.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = fastify({
     logger: true,
-
-    // Explicit request-id header support — request IDs are available on every
-    // request for future structured logging, tracing, metrics, and diagnostics.
     requestIdHeader: 'request-id',
   });
 
-  // Global Error Handler
-  app.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
+  app.setErrorHandler((error: Error, request, reply) => {
     app.log.error(error);
-    reply.status(error.statusCode || 500).send({
-      error: 'Internal Server Error',
-      message: error.message || 'An unexpected error occurred',
-    });
+
+    if (error instanceof AppError) {
+      const body: ErrorResponse = {
+        success: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+        },
+      };
+      return reply.status(error.statusCode).send(body);
+    }
+
+    const body: ErrorResponse = {
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'An unexpected error occurred',
+      },
+    };
+    return reply.status(500).send(body);
   });
 
-  // Register routes
   await app.register(healthRoutes);
 
   return app;
