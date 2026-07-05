@@ -25,6 +25,17 @@ interface StdioTransportConfig {
   requestTimeout?: number;
 }
 
+interface TransportOptions {
+  connectionTimeout?: number;
+  disconnectTimeout?: number;
+  initializeTimeout?: number;
+  processStartupTimeout?: number;
+  maxConcurrentRequests?: number;
+  maxMessageSize?: number;
+  maxStdoutBufferSize?: number;
+  maxStderrBufferSize?: number;
+}
+
 function extractTransportConfig(transportConfig: TransportConfig): StdioTransportConfig {
   return {
     command: transportConfig.command as string,
@@ -37,9 +48,23 @@ function extractTransportConfig(transportConfig: TransportConfig): StdioTranspor
 
 export class StdioTransport extends BaseTransport {
   private readonly sessions = new Map<string, StdioSession>();
+  private readonly options: Required<TransportOptions>;
 
-  constructor(private readonly connectionRegistry?: ConnectionRegistry) {
+  constructor(
+    private readonly connectionRegistry?: ConnectionRegistry,
+    options?: TransportOptions,
+  ) {
     super();
+    this.options = {
+      connectionTimeout: options?.connectionTimeout ?? 30000,
+      disconnectTimeout: options?.disconnectTimeout ?? 5000,
+      initializeTimeout: options?.initializeTimeout ?? 15000,
+      processStartupTimeout: options?.processStartupTimeout ?? 15000,
+      maxConcurrentRequests: options?.maxConcurrentRequests ?? 100,
+      maxMessageSize: options?.maxMessageSize ?? 1048576,
+      maxStdoutBufferSize: options?.maxStdoutBufferSize ?? 10485760,
+      maxStderrBufferSize: options?.maxStderrBufferSize ?? 1048576,
+    };
   }
 
   async connect(connectionId: string): Promise<ConnectResult> {
@@ -70,8 +95,17 @@ export class StdioTransport extends BaseTransport {
 
       const config = extractTransportConfig(connection.transportConfig);
 
-      const processManager = new StdioProcessManager();
-      const client = new JsonRpcClient(config.requestTimeout);
+      const processManager = new StdioProcessManager({
+        maxStdoutBufferSize: this.options.maxStdoutBufferSize,
+        maxStderrBufferSize: this.options.maxStderrBufferSize,
+        startupTimeout: this.options.processStartupTimeout,
+      });
+
+      const client = new JsonRpcClient({
+        defaultTimeout: config.requestTimeout,
+        maxMessageSize: this.options.maxMessageSize,
+        maxPendingRequests: this.options.maxConcurrentRequests,
+      });
 
       const session: StdioSession = {
         connectionId,
@@ -85,6 +119,10 @@ export class StdioTransport extends BaseTransport {
 
       this.sessions.set(connectionId, session);
 
+      const connectionTimer = setTimeout(() => {
+        this.cleanupSession(connectionId, 'Connection timed out');
+      }, this.options.connectionTimeout);
+
       client.setMessageHandler((message) => {
         if (processManager.isRunning()) {
           processManager.send(message);
@@ -97,33 +135,45 @@ export class StdioTransport extends BaseTransport {
           onStdout: (data: string) => {
             client.handleData(data);
           },
-          onStderr: (_data: string) => {},
-          onExit: (_code: number | null, _signal: string | null) => {
-            session.state = 'disconnected';
-            client.close();
-            this.sessions.delete(connectionId);
+          onStderr: (data: string) => {
+            this.onStderr(connectionId, data);
           },
-          onError: (_error: Error) => {
-            session.state = 'failed';
-            client.close();
-            this.sessions.delete(connectionId);
+          onExit: (code: number | null, signal: string | null) => {
+            clearTimeout(connectionTimer);
+            this.onProcessExit(connectionId, code, signal);
+          },
+          onError: (error: Error) => {
+            clearTimeout(connectionTimer);
+            this.onProcessError(connectionId, error);
           },
         },
       );
 
-      const initResult = await client.request('initialize', {
-        protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {},
-      });
+      const initResult = await client.request(
+        'initialize',
+        {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: {},
+        },
+        this.options.initializeTimeout,
+      );
 
       const initResponse = initResult.result as Record<string, unknown>;
+      const serverProtocolVersion = (initResponse.protocolVersion as string) ?? '';
+
+      if (serverProtocolVersion && serverProtocolVersion !== MCP_PROTOCOL_VERSION) {
+        this.onProtocolMismatch(connectionId, MCP_PROTOCOL_VERSION, serverProtocolVersion);
+      }
+
       session.serverCapabilities =
         (initResponse.serverCapabilities as Record<string, unknown>) ?? {};
-      session.protocolVersion = (initResponse.protocolVersion as string) ?? '';
+      session.protocolVersion = serverProtocolVersion;
 
       client.notification('notifications/initialized');
 
       session.state = 'connected';
+
+      clearTimeout(connectionTimer);
 
       return {
         success: true,
@@ -131,13 +181,10 @@ export class StdioTransport extends BaseTransport {
         status: 'connected',
       };
     } catch (error) {
-      const existing = this.sessions.get(connectionId);
-      if (existing) {
-        existing.state = 'failed';
-        existing.client.close();
-        await existing.process.kill().catch(() => {});
-        this.sessions.delete(connectionId);
-      }
+      this.cleanupSession(
+        connectionId,
+        error instanceof Error ? error.message : 'Connection failed',
+      );
 
       const message = error instanceof Error ? error.message : 'Connection failed';
       return {
@@ -167,7 +214,7 @@ export class StdioTransport extends BaseTransport {
       session.state = 'disconnecting';
 
       session.client.close();
-      await session.process.kill();
+      await session.process.kill(this.options.disconnectTimeout);
 
       session.state = 'disconnected';
       this.sessions.delete(connectionId);
@@ -210,6 +257,7 @@ export class StdioTransport extends BaseTransport {
         protocolVersion: session.protocolVersion,
         createdAt: session.createdAt.toISOString(),
         serverCapabilities: session.serverCapabilities,
+        processRunning: session.process.isRunning(),
       },
     };
   }
@@ -521,5 +569,52 @@ export class StdioTransport extends BaseTransport {
   supportsCapability(capability: string): boolean {
     if (capability === 'stdio') return true;
     return super.supportsCapability(capability);
+  }
+
+  private cleanupSession(connectionId: string, _reason: string): void {
+    const existing = this.sessions.get(connectionId);
+    if (existing) {
+      existing.state = 'failed';
+      existing.client.close();
+      existing.process.kill().catch(() => {});
+      this.sessions.delete(connectionId);
+    }
+  }
+
+  private onStderr(connectionId: string, data: string): void {
+    const session = this.sessions.get(connectionId);
+    if (session) {
+      if (!session.stderrOutput) {
+        session.stderrOutput = '';
+      }
+      session.stderrOutput += data;
+    }
+  }
+
+  private onProcessExit(connectionId: string, _code: number | null, _signal: string | null): void {
+    const session = this.sessions.get(connectionId);
+    if (session && session.state !== 'disconnecting' && session.state !== 'disconnected') {
+      session.client.close();
+      this.sessions.delete(connectionId);
+    } else if (session) {
+      session.state = 'disconnected';
+      this.sessions.delete(connectionId);
+    }
+  }
+
+  private onProcessError(connectionId: string, _error: Error): void {
+    const session = this.sessions.get(connectionId);
+    if (session) {
+      session.state = 'failed';
+      session.client.close();
+      this.sessions.delete(connectionId);
+    }
+  }
+
+  private onProtocolMismatch(connectionId: string, expected: string, actual: string): void {
+    const session = this.sessions.get(connectionId);
+    if (session) {
+      session.protocolVersion = actual;
+    }
   }
 }

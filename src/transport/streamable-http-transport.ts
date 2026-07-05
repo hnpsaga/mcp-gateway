@@ -23,6 +23,15 @@ interface HttpTransportConfig {
   requestTimeout: number;
 }
 
+interface TransportOptions {
+  connectionTimeout?: number;
+  disconnectTimeout?: number;
+  initializeTimeout?: number;
+  maxConcurrentRequests?: number;
+  maxMessageSize?: number;
+  maxResponseSize?: number;
+}
+
 function extractTransportConfig(transportConfig: TransportConfig): HttpTransportConfig {
   return {
     url: transportConfig.url as string,
@@ -33,9 +42,21 @@ function extractTransportConfig(transportConfig: TransportConfig): HttpTransport
 
 export class StreamableHttpTransport extends BaseTransport {
   private readonly sessions = new Map<string, HttpSession>();
+  private readonly options: Required<TransportOptions>;
 
-  constructor(private readonly connectionRegistry?: ConnectionRegistry) {
+  constructor(
+    private readonly connectionRegistry?: ConnectionRegistry,
+    options?: TransportOptions,
+  ) {
     super();
+    this.options = {
+      connectionTimeout: options?.connectionTimeout ?? 30000,
+      disconnectTimeout: options?.disconnectTimeout ?? 5000,
+      initializeTimeout: options?.initializeTimeout ?? 15000,
+      maxConcurrentRequests: options?.maxConcurrentRequests ?? 100,
+      maxMessageSize: options?.maxMessageSize ?? 1048576,
+      maxResponseSize: options?.maxResponseSize ?? 10485760,
+    };
   }
 
   async connect(connectionId: string): Promise<ConnectResult> {
@@ -66,11 +87,17 @@ export class StreamableHttpTransport extends BaseTransport {
 
       const config = extractTransportConfig(connection.transportConfig);
 
-      const client = new JsonRpcClient(config.requestTimeout * 2);
+      const client = new JsonRpcClient({
+        defaultTimeout: config.requestTimeout * 2,
+        maxMessageSize: this.options.maxMessageSize,
+        maxPendingRequests: this.options.maxConcurrentRequests,
+      });
+
       const httpClient = new HttpClient({
         baseUrl: config.url,
         headers: config.headers,
         timeout: config.requestTimeout,
+        maxResponseSize: this.options.maxResponseSize,
       });
 
       const session: HttpSession = {
@@ -87,19 +114,31 @@ export class StreamableHttpTransport extends BaseTransport {
 
       this.sessions.set(connectionId, session);
 
+      const connectionTimer = setTimeout(() => {
+        this.cleanupSession(connectionId, 'Connection timed out');
+      }, this.options.connectionTimeout);
+
       const initResult = await this.sendRequest(session, httpClient, 'initialize', {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
       });
 
       const initResponse = initResult.result as Record<string, unknown>;
+      const serverProtocolVersion = (initResponse.protocolVersion as string) ?? '';
+
+      if (serverProtocolVersion && serverProtocolVersion !== MCP_PROTOCOL_VERSION) {
+        this.onProtocolMismatch(connectionId, MCP_PROTOCOL_VERSION, serverProtocolVersion);
+      }
+
       session.serverCapabilities =
         (initResponse.serverCapabilities as Record<string, unknown>) ?? {};
-      session.protocolVersion = (initResponse.protocolVersion as string) ?? '';
+      session.protocolVersion = serverProtocolVersion;
 
       await this.sendNotification(session, httpClient, 'notifications/initialized');
 
       session.state = 'connected';
+
+      clearTimeout(connectionTimer);
 
       return {
         success: true,
@@ -107,12 +146,10 @@ export class StreamableHttpTransport extends BaseTransport {
         status: 'connected',
       };
     } catch (error) {
-      const existing = this.sessions.get(connectionId);
-      if (existing) {
-        existing.state = 'failed';
-        existing.client.close();
-        this.sessions.delete(connectionId);
-      }
+      this.cleanupSession(
+        connectionId,
+        error instanceof Error ? error.message : 'Connection failed',
+      );
 
       const message = error instanceof Error ? error.message : 'Connection failed';
       return {
@@ -258,11 +295,7 @@ export class StreamableHttpTransport extends BaseTransport {
     }
 
     try {
-      const httpClient = new HttpClient({
-        baseUrl: session.url,
-        headers: session.headers,
-        timeout: session.requestTimeout,
-      });
+      const httpClient = this.createHttpClient(session);
 
       const capabilities = session.serverCapabilities;
       const tools: Array<{
@@ -376,11 +409,7 @@ export class StreamableHttpTransport extends BaseTransport {
     }
 
     try {
-      const httpClient = new HttpClient({
-        baseUrl: session.url,
-        headers: session.headers,
-        timeout: session.requestTimeout,
-      });
+      const httpClient = this.createHttpClient(session);
 
       const result = await this.sendRequest(session, httpClient, 'tools/call', {
         name: toolName,
@@ -431,11 +460,7 @@ export class StreamableHttpTransport extends BaseTransport {
     }
 
     try {
-      const httpClient = new HttpClient({
-        baseUrl: session.url,
-        headers: session.headers,
-        timeout: session.requestTimeout,
-      });
+      const httpClient = this.createHttpClient(session);
 
       const listResult = await this.sendRequest(session, httpClient, 'resources/list');
       const listData = listResult.result as { resources?: Array<Record<string, unknown>> };
@@ -494,11 +519,7 @@ export class StreamableHttpTransport extends BaseTransport {
     }
 
     try {
-      const httpClient = new HttpClient({
-        baseUrl: session.url,
-        headers: session.headers,
-        timeout: session.requestTimeout,
-      });
+      const httpClient = this.createHttpClient(session);
 
       const result = await this.sendRequest(session, httpClient, 'prompts/get', {
         name: promptName,
@@ -523,6 +544,31 @@ export class StreamableHttpTransport extends BaseTransport {
   supportsCapability(capability: string): boolean {
     if (capability === 'streamable-http') return true;
     return super.supportsCapability(capability);
+  }
+
+  private createHttpClient(session: HttpSession): HttpClient {
+    return new HttpClient({
+      baseUrl: session.url,
+      headers: session.headers,
+      timeout: session.requestTimeout,
+      maxResponseSize: this.options.maxResponseSize,
+    });
+  }
+
+  private cleanupSession(connectionId: string, _reason: string): void {
+    const existing = this.sessions.get(connectionId);
+    if (existing) {
+      existing.state = 'failed';
+      existing.client.close();
+      this.sessions.delete(connectionId);
+    }
+  }
+
+  private onProtocolMismatch(connectionId: string, expected: string, actual: string): void {
+    const session = this.sessions.get(connectionId);
+    if (session) {
+      session.protocolVersion = actual;
+    }
   }
 
   private async sendRequest(

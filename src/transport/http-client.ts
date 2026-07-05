@@ -4,6 +4,7 @@ export interface HttpClientConfig {
   baseUrl: string;
   headers?: Record<string, string>;
   timeout?: number;
+  maxResponseSize?: number;
 }
 
 export interface HttpClientResult {
@@ -31,6 +32,17 @@ export class HttpClientTimeoutError extends InternalError {
   }
 }
 
+export class HttpClientResponseTooLargeError extends InternalError {
+  constructor(size: number, maxSize: number, url: string) {
+    super(`HTTP response exceeds maximum size: ${size} bytes (max: ${maxSize} bytes)`, {
+      size,
+      maxSize,
+      url,
+    });
+    this.name = 'HttpClientResponseTooLargeError';
+  }
+}
+
 export class HttpClient {
   private readonly defaults: Required<HttpClientConfig>;
 
@@ -39,6 +51,7 @@ export class HttpClient {
       baseUrl: config.baseUrl.replace(/\/+$/, ''),
       headers: config.headers ?? {},
       timeout: config.timeout ?? 30000,
+      maxResponseSize: config.maxResponseSize ?? 10485760,
     };
   }
 
@@ -75,6 +88,14 @@ export class HttpClient {
 
       const responseBody = await response.text();
 
+      if (Buffer.byteLength(responseBody, 'utf-8') > this.defaults.maxResponseSize) {
+        throw new HttpClientResponseTooLargeError(
+          Buffer.byteLength(responseBody, 'utf-8'),
+          this.defaults.maxResponseSize,
+          url,
+        );
+      }
+
       if (!response.ok) {
         throw new HttpClientError(
           response.status,
@@ -91,7 +112,11 @@ export class HttpClient {
     } catch (error) {
       clearTimeout(timer);
 
-      if (error instanceof HttpClientError) {
+      if (
+        error instanceof HttpClientError ||
+        error instanceof HttpClientTimeoutError ||
+        error instanceof HttpClientResponseTooLargeError
+      ) {
         throw error;
       }
 

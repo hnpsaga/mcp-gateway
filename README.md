@@ -35,6 +35,20 @@ Default variables:
 - `PORT`: Port to listen on (default `3000`)
 - `HOST`: IP address to listen on (default `127.0.0.1`)
 
+### Transport Configuration
+
+| Variable                            | Type   | Default    | Description                                                               |
+| :---------------------------------- | :----- | :--------- | :------------------------------------------------------------------------ |
+| `TRANSPORT_LOG_LEVEL`               | string | `info`     | Log level for transport layer (`error`, `warn`, `info`, `debug`, `trace`) |
+| `TRANSPORT_MAX_MESSAGE_SIZE`        | number | `1048576`  | Maximum JSON-RPC message size in bytes (1MB)                              |
+| `TRANSPORT_STDOUT_BUFFER_SIZE`      | number | `10485760` | Maximum stdout buffer size in bytes (10MB)                                |
+| `TRANSPORT_STDERR_BUFFER_SIZE`      | number | `1048576`  | Maximum stderr buffer size in bytes (1MB)                                 |
+| `TRANSPORT_MAX_CONCURRENT_REQUESTS` | number | `100`      | Maximum pending JSON-RPC requests per session                             |
+| `TRANSPORT_PROCESS_STARTUP_TIMEOUT` | number | `15000`    | Process startup timeout in milliseconds                                   |
+| `TRANSPORT_INITIALIZE_TIMEOUT`      | number | `15000`    | MCP initialize handshake timeout in milliseconds                          |
+| `TRANSPORT_CONNECTION_TIMEOUT`      | number | `30000`    | Total connection timeout in milliseconds                                  |
+| `TRANSPORT_DISCONNECT_TIMEOUT`      | number | `5000`     | Graceful disconnect timeout in milliseconds                               |
+
 ---
 
 ## Running Locally
@@ -323,6 +337,104 @@ Communicates with MCP servers over HTTP using JSON-RPC 2.0:
 | `url`            | string | Yes      | —       | Base URL of the MCP HTTP server             |
 | `headers`        | object | No       | `{}`    | Custom HTTP headers sent with every request |
 | `requestTimeout` | number | No       | `30000` | Request timeout in milliseconds             |
+
+**Stdio-specific Configuration Options:**
+
+| Option           | Type   | Required | Default | Description                             |
+| :--------------- | :----- | :------- | :------ | :-------------------------------------- |
+| `command`        | string | Yes      | —       | Command to spawn the MCP server process |
+| `args`           | array  | No       | `[]`    | Command-line arguments for the process  |
+| `env`            | object | No       | —       | Environment variables for the process   |
+| `cwd`            | string | No       | —       | Working directory for the process       |
+| `requestTimeout` | number | No       | `30000` | Request timeout in milliseconds         |
+
+## Transport Hardening
+
+The transport layer includes production-grade hardening features to improve reliability, robustness, and resilience.
+
+### Timeout Handling
+
+| Timeout                 | Transport | Config Key                          | Default | Description                                |
+| :---------------------- | :-------- | :---------------------------------- | :------ | :----------------------------------------- |
+| Process Startup Timeout | Stdio     | `TRANSPORT_PROCESS_STARTUP_TIMEOUT` | 15s     | Maximum time to wait for process startup   |
+| Initialize Timeout      | Both      | `TRANSPORT_INITIALIZE_TIMEOUT`      | 15s     | Maximum time for MCP initialize handshake  |
+| Connection Timeout      | Both      | `TRANSPORT_CONNECTION_TIMEOUT`      | 30s     | Total timeout for connection establishment |
+| Disconnect Timeout      | Both      | `TRANSPORT_DISCONNECT_TIMEOUT`      | 5s      | Maximum time for graceful disconnect       |
+| Request Timeout         | Both      | `requestTimeout` (per-connection)   | 30s     | JSON-RPC request timeout                   |
+
+Timeout errors produce meaningful error messages using the existing application error hierarchy (`JsonRpcTimeoutError`, `HttpClientTimeoutError`).
+
+### Resource Protection
+
+| Protection              | Transport       | Config Key                          | Default | Description                            |
+| :---------------------- | :-------------- | :---------------------------------- | :------ | :------------------------------------- |
+| Max Message Size        | Both            | `TRANSPORT_MAX_MESSAGE_SIZE`        | 1MB     | Maximum incoming JSON-RPC message size |
+| Stdout Buffer Size      | Stdio           | `TRANSPORT_STDOUT_BUFFER_SIZE`      | 10MB    | Maximum stdout data buffer             |
+| Stderr Buffer Size      | Stdio           | `TRANSPORT_STDERR_BUFFER_SIZE`      | 1MB     | Maximum stderr data buffer             |
+| Max Concurrent Requests | Both            | `TRANSPORT_MAX_CONCURRENT_REQUESTS` | 100     | Maximum pending JSON-RPC requests      |
+| Max Response Size       | Streamable HTTP | `maxResponseSize` (per-client)      | 10MB    | Maximum HTTP response body size        |
+
+When limits are exceeded, meaningful errors are returned through the application error hierarchy.
+
+### Structured Logging
+
+The transport layer captures structured information about:
+
+- Process startup and shutdown events
+- HTTP connection lifecycle
+- Stderr output from child processes
+- Timeout events
+- Protocol errors
+- Unexpected disconnects
+
+Logging is configured via `TRANSPORT_LOG_LEVEL` and does not expose sensitive information.
+
+### JSON-RPC Protocol Robustness
+
+The JSON-RPC client has been hardened against:
+
+- Malformed responses and invalid JSON
+- Unsupported protocol versions (non-2.0 messages are ignored)
+- Invalid request IDs
+- Duplicate responses (only the first response is processed)
+- Unexpected notifications (silently ignored)
+- Protocol error mapping (`JsonRpcError` with code, message, and optional data)
+- Pending request cleanup on client close
+- Closed client protection (rejects new requests)
+
+### Transport Recovery
+
+Both transports implement recovery mechanisms:
+
+- Clean session state after unexpected process termination
+- Proper cleanup after HTTP connection failures
+- Cleanup after crashes via `cleanupSession()` helper
+- Support for reconnect via `disconnect()` + `connect()` cycles
+- Safe handling of repeated connect/disconnect calls
+- State reset to guarantee clean state after failures
+
+### Capability Negotiation
+
+During the MCP initialization handshake:
+
+- Protocol version is validated against the expected `2024-11-05` version
+- Server capabilities are tracked per session
+- Capability negotiation follows the MCP specification
+- Protocol version mismatches are recorded for compatibility
+
+### Troubleshooting
+
+Common transport issues and their solutions:
+
+| Issue                       | Cause                                    | Solution                                           |
+| :-------------------------- | :--------------------------------------- | :------------------------------------------------- |
+| Connection timeout          | Server process failed to start           | Verify command and args in transport configuration |
+| Initialize timeout          | Server did not respond to initialize     | Check server compatibility with MCP protocol       |
+| Message too large           | Server sent oversized JSON-RPC message   | Increase `TRANSPORT_MAX_MESSAGE_SIZE` if needed    |
+| Too many pending requests   | Client exceeded concurrent request limit | Increase `TRANSPORT_MAX_CONCURRENT_REQUESTS`       |
+| Process exited unexpectedly | Server process crashed                   | Check server logs and stderr output                |
+| HTTP connection refused     | Server not running or wrong URL          | Verify URL and server availability                 |
+| Stderr output captured      | Server writing to stderr                 | Review stderr output for diagnostic information    |
 
 **Transport Architecture:**
 
