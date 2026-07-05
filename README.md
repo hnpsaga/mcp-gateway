@@ -361,6 +361,198 @@ All Discovery endpoints are documented in the generated OpenAPI specification. V
 
 ---
 
+## Execution API
+
+The Execution API is available under `/api/v1/execution`. It exposes the Execution Engine through REST endpoints, enabling direct interaction with managed MCP connections.
+
+### Execution Workflow
+
+1. A connection is created via the Connection Management API.
+2. Discovery is triggered on that connection via the Discovery API (cached capabilities are required for execution).
+3. The Execution Engine validates the connection exists and the requested capability is available.
+4. Execution is delegated to the transport layer, which communicates with the MCP server.
+5. The transport response is normalized into a consistent format before being returned.
+
+### Endpoint Overview
+
+| Method | Path                         | Description      |
+| :----- | :--------------------------- | :--------------- |
+| `POST` | `/api/v1/execution/tool`     | Execute a tool   |
+| `POST` | `/api/v1/execution/resource` | Read a resource  |
+| `POST` | `/api/v1/execution/prompt`   | Execute a prompt |
+
+### Tool Execution
+
+Execute an MCP tool on a managed connection.
+
+```http
+POST /api/v1/execution/tool
+Content-Type: application/json
+
+{
+  "connectionId": "uuid",
+  "toolName": "calculate",
+  "arguments": {
+    "expression": "2 + 2"
+  }
+}
+```
+
+**Successful Response (200):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "connectionId": "uuid",
+    "toolName": "calculate",
+    "arguments": { "expression": "2 + 2" },
+    "requestedAt": "2026-01-01T00:00:00.000Z",
+    "executedAt": "2026-01-01T00:00:00.001Z",
+    "status": "success",
+    "result": { "toolName": "calculate", "args": { "expression": "2 + 2" } }
+  }
+}
+```
+
+**Execution Error Response (200):**
+
+The request completed, but the tool execution failed:
+
+```json
+{
+  "success": true,
+  "data": {
+    "connectionId": "uuid",
+    "toolName": "calculate",
+    "arguments": {},
+    "requestedAt": "2026-01-01T00:00:00.000Z",
+    "executedAt": "2026-01-01T00:00:00.001Z",
+    "status": "error",
+    "error": {
+      "code": "EXECUTION_ERROR",
+      "message": "Tool execution timed out"
+    }
+  }
+}
+```
+
+**Not Found Response (404):**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Tool not found via discovery",
+    "details": { "connectionId": "uuid", "toolName": "unknown_tool" }
+  }
+}
+```
+
+### Resource Retrieval
+
+Read a resource from a managed connection.
+
+```http
+POST /api/v1/execution/resource
+Content-Type: application/json
+
+{
+  "connectionId": "uuid",
+  "resourceName": "Config"
+}
+```
+
+**Successful Response (200):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "connectionId": "uuid",
+    "resourceName": "Config",
+    "requestedAt": "2026-01-01T00:00:00.000Z",
+    "executedAt": "2026-01-01T00:00:00.001Z",
+    "status": "success",
+    "contents": { "setting": "value", "environment": "production" }
+  }
+}
+```
+
+### Prompt Execution
+
+Execute an MCP prompt on a managed connection.
+
+```http
+POST /api/v1/execution/prompt
+Content-Type: application/json
+
+{
+  "connectionId": "uuid",
+  "promptName": "analyze_code",
+  "arguments": {
+    "language": "typescript"
+  }
+}
+```
+
+**Successful Response (200):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "connectionId": "uuid",
+    "promptName": "analyze_code",
+    "arguments": { "language": "typescript" },
+    "requestedAt": "2026-01-01T00:00:00.000Z",
+    "executedAt": "2026-01-01T00:00:00.001Z",
+    "status": "success",
+    "result": { "promptName": "analyze_code", "args": { "language": "typescript" } }
+  }
+}
+```
+
+### Request Schemas
+
+**Tool Execution:**
+
+| Field        | Type   | Required | Description                      |
+| :----------- | :----- | :------- | :------------------------------- |
+| connectionId | string | Yes      | The ID of the managed connection |
+| toolName     | string | Yes      | The name of the tool to execute  |
+| arguments    | object | Yes      | Arguments to pass to the tool    |
+
+**Resource Retrieval:**
+
+| Field        | Type   | Required | Description                      |
+| :----------- | :----- | :------- | :------------------------------- |
+| connectionId | string | Yes      | The ID of the managed connection |
+| resourceName | string | Yes      | The name of the resource to read |
+
+**Prompt Execution:**
+
+| Field        | Type   | Required | Description                       |
+| :----------- | :----- | :------- | :-------------------------------- |
+| connectionId | string | Yes      | The ID of the managed connection  |
+| promptName   | string | Yes      | The name of the prompt to execute |
+| arguments    | object | Yes      | Arguments to pass to the prompt   |
+
+### Validation Strategy
+
+All validation is performed by the Execution Engine:
+
+- **Connection validation**: The engine verifies the connection exists in the registry.
+- **Discovery validation**: The engine verifies the requested capability (tool, resource, or prompt) was previously discovered and cached.
+- **No validation is duplicated** inside the REST controllers.
+
+### Swagger Usage
+
+All Execution endpoints are documented in the generated OpenAPI specification. Visit `/documentation` for the Swagger UI or `/documentation/json` for the raw OpenAPI spec.
+
+---
+
 ## Available Scripts
 
 | Script               | Description                                                   |
