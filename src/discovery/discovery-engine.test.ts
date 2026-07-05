@@ -103,6 +103,7 @@ describe('DiscoveryEngine', () => {
         executeTool: vi.fn(),
         readResource: vi.fn(),
         executePrompt: vi.fn(),
+        complete: vi.fn(),
         supportsCapability: vi.fn().mockReturnValue(false),
       };
 
@@ -374,6 +375,7 @@ describe('DiscoveryEngine', () => {
         executeTool: vi.fn(),
         readResource: vi.fn(),
         executePrompt: vi.fn(),
+        complete: vi.fn(),
         supportsCapability: vi.fn().mockReturnValue(true),
       };
 

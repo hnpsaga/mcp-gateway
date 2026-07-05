@@ -5,6 +5,8 @@ import { getLogger, sanitize, traceSpan } from '../shared/observability/index.js
 import { executionCounter, executionDuration } from '../shared/observability/metrics.js';
 import type { Transport } from '../transport/transport.js';
 import type {
+  ExecuteCompleteRequest,
+  ExecuteCompleteResponse,
   ExecutePromptRequest,
   ExecutePromptResponse,
   ExecuteToolRequest,
@@ -38,11 +40,18 @@ export class ExecutionEngine {
         await this.ensureConnectionExists(request.connectionId);
         await this.ensureToolExists(request.connectionId, request.toolName);
 
-        const transportResult = await this.transport.executeTool(
-          request.connectionId,
-          request.toolName,
-          request.arguments,
-        );
+        const transportResult = request.abortSignal
+          ? await this.transport.executeTool(
+              request.connectionId,
+              request.toolName,
+              request.arguments,
+              request.abortSignal,
+            )
+          : await this.transport.executeTool(
+              request.connectionId,
+              request.toolName,
+              request.arguments,
+            );
 
         const executedAt = new Date();
         const diff = process.hrtime(start);
@@ -116,10 +125,13 @@ export class ExecutionEngine {
         await this.ensureConnectionExists(request.connectionId);
         await this.ensureResourceExists(request.connectionId, request.resourceName);
 
-        const transportResult = await this.transport.readResource(
-          request.connectionId,
-          request.resourceName,
-        );
+        const transportResult = request.abortSignal
+          ? await this.transport.readResource(
+              request.connectionId,
+              request.resourceName,
+              request.abortSignal,
+            )
+          : await this.transport.readResource(request.connectionId, request.resourceName);
 
         const executedAt = new Date();
         const diff = process.hrtime(start);
@@ -191,11 +203,18 @@ export class ExecutionEngine {
         await this.ensureConnectionExists(request.connectionId);
         await this.ensurePromptExists(request.connectionId, request.promptName);
 
-        const transportResult = await this.transport.executePrompt(
-          request.connectionId,
-          request.promptName,
-          request.arguments,
-        );
+        const transportResult = request.abortSignal
+          ? await this.transport.executePrompt(
+              request.connectionId,
+              request.promptName,
+              request.arguments,
+              request.abortSignal,
+            )
+          : await this.transport.executePrompt(
+              request.connectionId,
+              request.promptName,
+              request.arguments,
+            );
 
         const executedAt = new Date();
         const diff = process.hrtime(start);
@@ -246,6 +265,78 @@ export class ExecutionEngine {
         executionDuration.observe({ type: 'prompt', status: 'failure' }, durationSec);
         const msg = error instanceof Error ? error.message : String(error);
         activeLogger.error({ durationMs, error }, `Error in ExecutionEngine.executePrompt: ${msg}`);
+        throw error;
+      }
+    });
+  }
+
+  async complete(request: ExecuteCompleteRequest): Promise<ExecuteCompleteResponse> {
+    const start = process.hrtime();
+    const requestedAt = new Date();
+    const activeLogger = getLogger().child({ component: 'ExecutionEngine' });
+    activeLogger.info({ args: [sanitize(request)] }, 'Starting ExecutionEngine.complete');
+
+    return traceSpan('ExecutionEngine.complete', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'ExecutionEngine');
+        span.setAttribute('method', 'complete');
+        span.setAttribute('connectionId', request.connectionId);
+      }
+
+      try {
+        await this.ensureConnectionExists(request.connectionId);
+
+        const transportResult = (await this.transport.complete(
+          request.connectionId,
+          request.ref,
+          request.argument,
+        )) as { success: boolean; result?: unknown; error?: string };
+
+        const executedAt = new Date();
+        const diff = process.hrtime(start);
+        const durationSec = diff[0] + diff[1] / 1e9;
+        const durationMs = durationSec * 1000;
+
+        if (!transportResult.success) {
+          const response: ExecuteCompleteResponse = {
+            connectionId: request.connectionId,
+            requestedAt,
+            executedAt,
+            status: 'error',
+            error: {
+              code: 'EXECUTION_ERROR',
+              message: transportResult.error ?? 'Completion failed',
+            },
+          };
+          executionCounter.inc({ type: 'complete', status: 'failure' });
+          executionDuration.observe({ type: 'complete', status: 'failure' }, durationSec);
+          activeLogger.error(
+            { durationMs, error: response.error },
+            `Error in ExecutionEngine.complete: ${response.error?.message}`,
+          );
+          return response;
+        }
+
+        const response: ExecuteCompleteResponse = {
+          connectionId: request.connectionId,
+          requestedAt,
+          executedAt,
+          status: 'success',
+          result: transportResult.result,
+        };
+
+        executionCounter.inc({ type: 'complete', status: 'success' });
+        executionDuration.observe({ type: 'complete', status: 'success' }, durationSec);
+        activeLogger.info({ durationMs }, 'Completed ExecutionEngine.complete successfully');
+        return response;
+      } catch (error) {
+        const diff = process.hrtime(start);
+        const durationSec = diff[0] + diff[1] / 1e9;
+        const durationMs = durationSec * 1000;
+        executionCounter.inc({ type: 'complete', status: 'failure' });
+        executionDuration.observe({ type: 'complete', status: 'failure' }, durationSec);
+        const msg = error instanceof Error ? error.message : String(error);
+        activeLogger.error({ durationMs, error }, `Error in ExecutionEngine.complete: ${msg}`);
         throw error;
       }
     });

@@ -219,16 +219,41 @@ export class MockHttpMcpServer {
         res.end('{}');
         break;
 
-      case 'tools/list':
+      case 'tools/list': {
+        const cursor = (request.params as { cursor?: string })?.cursor;
         res.statusCode = 200;
-        res.end(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id,
-            result: { tools: this.config.tools },
-          }),
-        );
+        if (!cursor) {
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              result: {
+                tools: this.config.tools?.slice(0, 1) ?? [],
+                nextCursor: this.config.tools && this.config.tools.length > 1 ? 'page2' : undefined,
+              },
+            }),
+          );
+        } else if (cursor === 'page2') {
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              result: {
+                tools: this.config.tools?.slice(1) ?? [],
+              },
+            }),
+          );
+        } else {
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              result: { tools: [] },
+            }),
+          );
+        }
         break;
+      }
 
       case 'tools/call':
         res.statusCode = 200;
@@ -248,16 +273,42 @@ export class MockHttpMcpServer {
         );
         break;
 
-      case 'resources/list':
+      case 'resources/list': {
+        const cursor = (request.params as { cursor?: string })?.cursor;
         res.statusCode = 200;
-        res.end(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id,
-            result: { resources: this.config.resources },
-          }),
-        );
+        if (!cursor) {
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              result: {
+                resources: this.config.resources?.slice(0, 1) ?? [],
+                nextCursor:
+                  this.config.resources && this.config.resources.length > 1 ? 'page2' : undefined,
+              },
+            }),
+          );
+        } else if (cursor === 'page2') {
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              result: {
+                resources: this.config.resources?.slice(1) ?? [],
+              },
+            }),
+          );
+        } else {
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              result: { resources: [] },
+            }),
+          );
+        }
         break;
+      }
 
       case 'resources/read':
         res.statusCode = 200;
@@ -278,16 +329,42 @@ export class MockHttpMcpServer {
         );
         break;
 
-      case 'prompts/list':
+      case 'prompts/list': {
+        const cursor = (request.params as { cursor?: string })?.cursor;
         res.statusCode = 200;
-        res.end(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id,
-            result: { prompts: this.config.prompts },
-          }),
-        );
+        if (!cursor) {
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              result: {
+                prompts: this.config.prompts?.slice(0, 1) ?? [],
+                nextCursor:
+                  this.config.prompts && this.config.prompts.length > 1 ? 'page2' : undefined,
+              },
+            }),
+          );
+        } else if (cursor === 'page2') {
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              result: {
+                prompts: this.config.prompts?.slice(1) ?? [],
+              },
+            }),
+          );
+        } else {
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              result: { prompts: [] },
+            }),
+          );
+        }
         break;
+      }
 
       case 'prompts/get':
         res.statusCode = 200;
@@ -306,6 +383,22 @@ export class MockHttpMcpServer {
                   },
                 },
               ],
+            },
+          }),
+        );
+        break;
+
+      case 'completion/complete':
+        res.statusCode = 200;
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id,
+            result: {
+              completion: {
+                values: ['value1', 'value2'],
+                hasMore: false,
+              },
             },
           }),
         );

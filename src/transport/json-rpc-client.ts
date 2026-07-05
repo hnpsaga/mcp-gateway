@@ -62,6 +62,7 @@ export class JsonRpcMessageTooLargeError extends ValidationError {
 }
 
 export type OutgoingMessageHandler = (message: string) => void;
+export type NotificationHandler = (method: string, params: unknown) => void;
 
 interface PendingRequest {
   resolve: (response: JsonRpcResponse) => void;
@@ -86,6 +87,7 @@ export class JsonRpcClient {
   private seenIds = new Set<number>();
   private totalBytesReceived = 0;
   private closed = false;
+  private notificationHandler?: NotificationHandler;
 
   constructor(config?: number | JsonRpcClientConfig) {
     if (typeof config === 'number' || config === undefined) {
@@ -99,10 +101,15 @@ export class JsonRpcClient {
     }
   }
 
+  setNotificationHandler(handler: NotificationHandler): void {
+    this.notificationHandler = handler;
+  }
+
   async request(
     method: string,
     params?: unknown,
     timeout?: number,
+    abortSignal?: AbortSignal,
   ): Promise<JsonRpcSuccessResponse> {
     if (this.closed) {
       throw new InternalError('Cannot send request: JSON-RPC client is closed', { method });
@@ -118,6 +125,20 @@ export class JsonRpcClient {
     const id = this.nextId++;
     const requestTimeout = timeout ?? this.defaultTimeout;
 
+    let finalParams = params;
+    if (['tools/call', 'resources/read', 'prompts/get', 'completion/complete'].includes(method)) {
+      const progressToken = `progress-${id}`;
+      const paramsObj = (params as Record<string, unknown>) ?? {};
+      if (!paramsObj._meta) {
+        finalParams = {
+          ...paramsObj,
+          _meta: {
+            progressToken,
+          },
+        };
+      }
+    }
+
     return new Promise<JsonRpcSuccessResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
@@ -125,9 +146,36 @@ export class JsonRpcClient {
         reject(new JsonRpcTimeoutError(method, requestTimeout));
       }, requestTimeout);
 
+      let onAbort: (() => void) | undefined;
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          clearTimeout(timer);
+          reject(new Error('Request aborted'));
+          return;
+        }
+
+        onAbort = () => {
+          clearTimeout(timer);
+          this.pendingRequests.delete(id);
+          this.seenIds.delete(id);
+
+          this.notification('notifications/cancelled', {
+            requestId: id,
+            reason: 'Request aborted by client',
+          });
+
+          reject(new Error('Request aborted'));
+        };
+        abortSignal.addEventListener('abort', onAbort);
+      }
+
       this.pendingRequests.set(id, {
         resolve: (response: JsonRpcResponse) => {
           clearTimeout(timer);
+          if (abortSignal && onAbort) {
+            abortSignal.removeEventListener('abort', onAbort);
+          }
           if ('result' in response) {
             resolve(response);
           } else {
@@ -137,6 +185,9 @@ export class JsonRpcClient {
         },
         reject: (error: Error) => {
           clearTimeout(timer);
+          if (abortSignal && onAbort) {
+            abortSignal.removeEventListener('abort', onAbort);
+          }
           reject(error);
         },
         timer,
@@ -144,7 +195,7 @@ export class JsonRpcClient {
         createdAt: Date.now(),
       });
 
-      this.sendMessage({ jsonrpc: '2.0', id, method, params });
+      this.sendMessage({ jsonrpc: '2.0', id, method, params: finalParams });
     });
   }
 
@@ -221,7 +272,33 @@ export class JsonRpcClient {
 
     const msg = message as Record<string, unknown>;
 
-    if (msg.jsonrpc !== '2.0') return;
+    if (msg.jsonrpc !== '2.0') {
+      const rawId = msg.id;
+      if (typeof rawId === 'number' && this.pendingRequests.has(rawId)) {
+        const pending = this.pendingRequests.get(rawId)!;
+        pending.reject(new ValidationError('Invalid JSON-RPC version: expected "2.0"', msg));
+        this.pendingRequests.delete(rawId);
+      }
+      return;
+    }
+
+    if (msg.id !== undefined && msg.id !== null && typeof msg.method === 'string') {
+      const errorResponse: JsonRpcErrorResponse = {
+        jsonrpc: '2.0',
+        id: typeof msg.id === 'number' ? msg.id : 0,
+        error: {
+          code: -32601,
+          message: `Method not found: ${msg.method}`,
+        },
+      };
+      this.messageHandler(JSON.stringify(errorResponse) + '\n');
+      return;
+    }
+
+    if ((msg.id === undefined || msg.id === null) && typeof msg.method === 'string') {
+      this.notificationHandler?.(msg.method, msg.params);
+      return;
+    }
 
     if (typeof msg.id !== 'number') {
       return;
