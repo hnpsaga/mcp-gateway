@@ -6,6 +6,10 @@ export { TransportFactory } from './transport-factory.js';
 export type {
   ConnectResult,
   DisconnectResult,
+  DiscoverCapabilitiesResult,
+  TransportPrompt,
+  TransportResource,
   TransportStatus,
   TransportStatusResult,
+  TransportTool,
 } from './transport-result.js';

@@ -21,6 +21,7 @@ describe('TransportFactory', () => {
     expect(transport.connect).toBeInstanceOf(Function);
     expect(transport.disconnect).toBeInstanceOf(Function);
     expect(transport.getStatus).toBeInstanceOf(Function);
+    expect(transport.discoverCapabilities).toBeInstanceOf(Function);
     expect(transport.supportsCapability).toBeInstanceOf(Function);
   });
 
@@ -29,6 +30,7 @@ describe('TransportFactory', () => {
     expect(transport.connect).toBeInstanceOf(Function);
     expect(transport.disconnect).toBeInstanceOf(Function);
     expect(transport.getStatus).toBeInstanceOf(Function);
+    expect(transport.discoverCapabilities).toBeInstanceOf(Function);
     expect(transport.supportsCapability).toBeInstanceOf(Function);
   });
 

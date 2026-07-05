@@ -36,6 +36,20 @@ describe('StdioTransport', () => {
     expect(result.details).toBeUndefined();
   });
 
+  it('should discover capabilities with tools, resources, and prompts', async () => {
+    const result = await transport.discoverCapabilities('conn-1');
+
+    expect(result.success).toBe(true);
+    expect(result.connectionId).toBe('conn-1');
+    expect(result.capabilities).toBeDefined();
+    expect(result.capabilities!.tools).toHaveLength(2);
+    expect(result.capabilities!.resources).toHaveLength(2);
+    expect(result.capabilities!.prompts).toHaveLength(2);
+    expect(result.capabilities!.tools[0].name).toBe('calculate');
+    expect(result.capabilities!.resources[0].name).toBe('Config');
+    expect(result.capabilities!.prompts[0].name).toBe('analyze_code');
+  });
+
   it('should support stdio capability', () => {
     expect(transport.supportsCapability('stdio')).toBe(true);
   });
@@ -44,6 +58,10 @@ describe('StdioTransport', () => {
     expect(transport.supportsCapability('connect')).toBe(true);
     expect(transport.supportsCapability('disconnect')).toBe(true);
     expect(transport.supportsCapability('status')).toBe(true);
+  });
+
+  it('should support discover-capabilities capability', () => {
+    expect(transport.supportsCapability('discover-capabilities')).toBe(true);
   });
 
   it('should not support unknown capabilities', () => {
@@ -93,6 +111,20 @@ describe('StreamableHttpTransport', () => {
     expect(result.status).toBe('connected');
   });
 
+  it('should discover capabilities with tools, resources, and prompts', async () => {
+    const result = await transport.discoverCapabilities('conn-1');
+
+    expect(result.success).toBe(true);
+    expect(result.connectionId).toBe('conn-1');
+    expect(result.capabilities).toBeDefined();
+    expect(result.capabilities!.tools).toHaveLength(2);
+    expect(result.capabilities!.resources).toHaveLength(2);
+    expect(result.capabilities!.prompts).toHaveLength(2);
+    expect(result.capabilities!.tools[0].name).toBe('get_weather');
+    expect(result.capabilities!.resources[0].name).toBe('Weather API');
+    expect(result.capabilities!.prompts[0].name).toBe('summarize');
+  });
+
   it('should support streamable-http capability', () => {
     expect(transport.supportsCapability('streamable-http')).toBe(true);
   });
@@ -101,6 +133,10 @@ describe('StreamableHttpTransport', () => {
     expect(transport.supportsCapability('connect')).toBe(true);
     expect(transport.supportsCapability('disconnect')).toBe(true);
     expect(transport.supportsCapability('status')).toBe(true);
+  });
+
+  it('should support discover-capabilities capability', () => {
+    expect(transport.supportsCapability('discover-capabilities')).toBe(true);
   });
 
   it('should not support unknown capabilities', () => {
