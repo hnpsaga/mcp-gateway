@@ -138,6 +138,110 @@ Same response as the root-level health endpoint.
 
 ---
 
+## Connection Management API
+
+The Connection Management API is available under `/api/v1/connections`. It exposes the Connection Registry through REST endpoints.
+
+### Endpoint Overview
+
+| Method   | Path                                        | Description          |
+| :------- | :------------------------------------------ | :------------------- |
+| `POST`   | `/api/v1/connections`                       | Create a connection  |
+| `GET`    | `/api/v1/connections`                       | List all connections |
+| `GET`    | `/api/v1/connections/:connectionId`         | Get a connection     |
+| `PUT`    | `/api/v1/connections/:connectionId`         | Update a connection  |
+| `DELETE` | `/api/v1/connections/:connectionId`         | Delete a connection  |
+| `POST`   | `/api/v1/connections/:connectionId/enable`  | Enable a connection  |
+| `POST`   | `/api/v1/connections/:connectionId/disable` | Disable a connection |
+| `POST`   | `/api/v1/connections/:connectionId/test`    | Test a connection    |
+
+### Example: Create a Connection
+
+```http
+POST /api/v1/connections
+Content-Type: application/json
+
+{
+  "name": "My MCP Server",
+  "transportType": "stdio",
+  "transportConfig": {
+    "command": "node",
+    "args": ["server.js"]
+  },
+  "tags": ["production"],
+  "metadata": { "environment": "prod" }
+}
+```
+
+**Response (201):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "name": "My MCP Server",
+    "description": "",
+    "transportType": "stdio",
+    "transportConfig": { "command": "node", "args": ["server.js"] },
+    "enabled": true,
+    "tags": ["production"],
+    "metadata": { "environment": "prod" },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z"
+  }
+}
+```
+
+### Example: List All Connections
+
+```http
+GET /api/v1/connections
+```
+
+**Response (200):**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "uuid-1",
+      "name": "Server 1",
+      "transportType": "stdio",
+      ...
+    }
+  ]
+}
+```
+
+### Example: Test a Connection
+
+```http
+POST /api/v1/connections/:connectionId/test
+```
+
+**Response (200):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "valid",
+    "connectionId": "uuid",
+    "message": "Connection definition is valid and ready for transport initialization"
+  }
+}
+```
+
+The test endpoint verifies the connection exists, is enabled, and has a valid configuration. No transport-level communication is performed.
+
+### Swagger Usage
+
+All Connection Management endpoints are documented in the generated OpenAPI specification. Visit `/documentation` for the Swagger UI or `/documentation/json` for the raw OpenAPI spec.
+
+---
+
 ## Available Scripts
 
 | Script               | Description                                                   |
@@ -220,7 +324,7 @@ This project enforces high-quality standards through automated pre-commit gates:
 │   │       └── v1/       # API v1 route modules
 │   │           ├── index.ts       # V1 route registration
 │   │           ├── health.ts      # V1 health endpoint
-│   │           ├── connections.ts # Future: Connection management
+│   │           ├── connections.ts # Connection Management API
 │   │           ├── discovery.ts   # Future: Capability discovery
 │   │           ├── execution.ts   # Future: Tool execution
 │   │           ├── ai.ts          # Future: AI interaction
