@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import fastify, { FastifyInstance } from 'fastify';
 
 import { healthRoutes } from './routes/health.js';
@@ -8,9 +6,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = fastify({
     logger: true,
 
-    // Explicit request ID configuration for structured logging, tracing, and metrics
+    // Explicit request-id header support — request IDs are available on every
+    // request for future structured logging, tracing, metrics, and diagnostics.
     requestIdHeader: 'request-id',
-    genReqId: () => randomUUID(),
   });
 
   // Global Error Handler
