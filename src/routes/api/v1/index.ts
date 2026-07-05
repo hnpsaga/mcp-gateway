@@ -9,7 +9,7 @@ import { operationsRoutes } from './operations.js';
 
 export async function v1Routes(fastify: FastifyInstance) {
   await fastify.register(healthRoutes);
-  await fastify.register(connectionRoutes);
+  await fastify.register(connectionRoutes, { prefix: '/connections' });
   await fastify.register(discoveryRoutes);
   await fastify.register(executionRoutes);
   await fastify.register(aiRoutes);

@@ -258,11 +258,12 @@ describe('request IDs', () => {
 });
 
 describe('route registration', () => {
-  it('should have all placeholder route modules registered', async () => {
+  it('should have all route modules registered', async () => {
     const app = await buildApp();
     const routes = app.printRoutes();
 
-    expect(routes).toContain('api/v1/health');
+    expect(routes).toContain('health');
+    expect(routes).toContain('connections');
 
     await app.close();
   });

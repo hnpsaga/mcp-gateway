@@ -2,15 +2,26 @@ import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUi from '@fastify/swagger-ui';
 import fastify, { type FastifyInstance } from 'fastify';
 
+import { ConnectionRegistry, InMemoryConnectionRepository } from './connections/index.js';
 import { ApiError } from './lib/api/error-handler.js';
 import { v1Routes } from './routes/api/v1/index.js';
 import { healthRoutes } from './routes/health.js';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    connectionRegistry: ConnectionRegistry;
+  }
+}
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = fastify({
     logger: true,
     requestIdHeader: 'request-id',
   });
+
+  const connectionRepository = new InMemoryConnectionRepository();
+  const connectionRegistry = new ConnectionRegistry(connectionRepository);
+  app.decorate('connectionRegistry', connectionRegistry);
 
   await app.register(fastifySwagger, {
     openapi: {
