@@ -790,6 +790,81 @@ All Execution endpoints are documented in the generated OpenAPI specification. V
 | `pnpm test`          | Run Vitest test suite once.                                   |
 | `pnpm test:watch`    | Run Vitest in watch mode.                                     |
 | `pnpm test:coverage` | Run Vitest and output code coverage reports.                  |
+| `pnpm db:generate`   | Generate a new database migration using Drizzle Kit.          |
+| `pnpm db:migrate`    | Apply pending database migrations.                            |
+| `pnpm db:studio`     | Open Drizzle Studio to browse the database.                   |
+
+---
+
+## Database
+
+MCP Gateway uses **SQLite** as its embedded database engine, with **Drizzle ORM** for type-safe queries and **Drizzle Kit** for managing schema migrations.
+
+### Database Configuration
+
+The database is configured via environment variables:
+
+| Variable                | Type    | Default          | Description                                       |
+| :---------------------- | :------ | :--------------- | :------------------------------------------------ |
+| `DATABASE_PATH`         | string  | `./data`         | Directory path for the SQLite database file       |
+| `DATABASE_FILENAME`     | string  | `mcp-gateway.db` | SQLite database filename                          |
+| `DATABASE_WAL_MODE`     | boolean | `true`           | Enable WAL journaling mode for better concurrency |
+| `DATABASE_BUSY_TIMEOUT` | number  | `5000`           | Busy timeout in milliseconds                      |
+
+### Database Schema
+
+Three tables are managed by the persistence layer:
+
+| Table             | Purpose                                                 |
+| :---------------- | :------------------------------------------------------ |
+| `connections`     | Connection definitions, transport config, and metadata  |
+| `discovery_cache` | Cached capabilities (tools, resources, prompts)         |
+| `runtime_state`   | Runtime connection status, retry tracking, failure info |
+
+The schema is defined in `src/persistence/schema.ts`.
+
+### Migration Workflow
+
+Migrations are managed declaratively through Drizzle Kit:
+
+```bash
+# Generate a new migration after schema changes
+pnpm db:generate
+
+# Apply pending migrations at runtime (automatic on startup)
+pnpm db:migrate
+```
+
+Migrations are applied automatically when the application starts. The migration files live in `src/persistence/migrations/` and should be committed to version control.
+
+### Development Workflow
+
+During development, the database is stored at `./data/mcp-gateway.db` by default. The `data/` directory is gitignored and will be created automatically on first run.
+
+To reset the database during development:
+
+```bash
+rm -rf data/
+```
+
+The database will be recreated with the latest schema on the next application start.
+
+### Production Recommendations
+
+- Mount a persistent volume at the `DATABASE_PATH` location when running in Docker.
+- WAL mode is enabled by default and recommended for production.
+- The busy timeout of 5 seconds handles concurrent access gracefully.
+- Regular SQLite backups are recommended (`sqlite3 data/mcp-gateway.db ".backup backup.db"`).
+
+### Backup Recommendations
+
+```bash
+# Hot backup using SQLite's backup API
+sqlite3 data/mcp-gateway.db ".backup /backup/mcp-gateway-$(date +%Y%m%d).db"
+
+# Restore from backup
+cp /backup/mcp-gateway-20260101.db data/mcp-gateway.db
+```
 
 ---
 

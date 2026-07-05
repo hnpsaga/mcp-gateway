@@ -18,12 +18,25 @@ const configSchema = z.object({
   TRANSPORT_INITIALIZE_TIMEOUT: z.coerce.number().int().positive().default(15000), // 15s
   TRANSPORT_CONNECTION_TIMEOUT: z.coerce.number().int().positive().default(30000), // 30s
   TRANSPORT_DISCONNECT_TIMEOUT: z.coerce.number().int().positive().default(5000), // 5s
+
+  // Database configuration
+  DATABASE_PATH: z.string().default('./data'),
+  DATABASE_FILENAME: z.string().default('mcp-gateway.db'),
+  DATABASE_WAL_MODE: z
+    .string()
+    .default('true')
+    .transform((v) => v !== 'false'),
+  DATABASE_BUSY_TIMEOUT: z.coerce.number().int().positive().default(5000),
 });
 
 const parsed = configSchema.safeParse({
   NODE_ENV: process.env.NODE_ENV,
   PORT: process.env.PORT,
   HOST: process.env.HOST,
+  DATABASE_PATH: process.env.DATABASE_PATH,
+  DATABASE_FILENAME: process.env.DATABASE_FILENAME,
+  DATABASE_WAL_MODE: process.env.DATABASE_WAL_MODE,
+  DATABASE_BUSY_TIMEOUT: process.env.DATABASE_BUSY_TIMEOUT,
 });
 
 if (!parsed.success) {

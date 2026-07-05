@@ -2,10 +2,19 @@ import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUi from '@fastify/swagger-ui';
 import fastify, { type FastifyInstance } from 'fastify';
 
-import { ConnectionRegistry, InMemoryConnectionRepository } from './connections/index.js';
-import { DiscoveryEngine, InMemoryDiscoveryCache } from './discovery/index.js';
+import { config } from './config/index.js';
+import { ConnectionRegistry } from './connections/index.js';
+import { DiscoveryEngine } from './discovery/index.js';
 import { ExecutionEngine } from './execution/index.js';
 import { ApiError } from './lib/api/error-handler.js';
+import {
+  buildDatabaseConfig,
+  closeDatabase,
+  initializeDatabase,
+  runMigrations,
+  SqliteConnectionRepository,
+  SqliteDiscoveryCache,
+} from './persistence/index.js';
 import { v1Routes } from './routes/api/v1/index.js';
 import { healthRoutes } from './routes/health.js';
 import { StdioTransport } from './transport/stdio-transport.js';
@@ -26,11 +35,15 @@ export async function buildApp(): Promise<FastifyInstance> {
     requestIdHeader: 'request-id',
   });
 
-  const connectionRepository = new InMemoryConnectionRepository();
+  const dbConfig = buildDatabaseConfig(config);
+  const db = initializeDatabase(dbConfig);
+  runMigrations(db);
+
+  const connectionRepository = new SqliteConnectionRepository();
   const connectionRegistry = new ConnectionRegistry(connectionRepository);
   app.decorate('connectionRegistry', connectionRegistry);
 
-  const discoveryCache = new InMemoryDiscoveryCache();
+  const discoveryCache = new SqliteDiscoveryCache();
   const transport = new StdioTransport(connectionRegistry);
   app.decorate('transport', transport);
   const discoveryEngine = new DiscoveryEngine(connectionRegistry, transport, discoveryCache);
@@ -61,6 +74,11 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.addHook('onSend', (_request, reply, _payload, done) => {
     void reply.header('request-id', reply.request.id);
+    done();
+  });
+
+  app.addHook('onClose', (_app, done) => {
+    closeDatabase();
     done();
   });
 
