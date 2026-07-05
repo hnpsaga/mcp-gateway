@@ -1,4 +1,5 @@
 import { ConflictError, NotFoundError } from '../../shared/errors/index.js';
+import type { Transport } from '../../transport/transport.js';
 import type { ConnectionRegistry } from '../connection-registry.js';
 import type { ConnectionStatus } from './connection-status.js';
 import { STATUS_TRANSITIONS } from './connection-status.js';
@@ -9,6 +10,7 @@ export class LifecycleManager {
   constructor(
     private readonly runtimeRepository: RuntimeStateRepository,
     private readonly connectionRegistry: ConnectionRegistry,
+    private readonly transport: Transport,
   ) {}
 
   async initialize(connectionId: string): Promise<RuntimeConnectionState> {
@@ -54,14 +56,27 @@ export class LifecycleManager {
     };
     await this.runtimeRepository.save(connectingState);
 
-    const connectedState: RuntimeConnectionState = {
-      ...connectingState,
-      status: 'connected',
-      lastSuccessfulConnection: new Date(),
-    };
-    await this.runtimeRepository.save(connectedState);
+    const result = await this.transport.connect(connectionId);
 
-    return connectedState;
+    if (result.success) {
+      const connectedState: RuntimeConnectionState = {
+        ...connectingState,
+        status: 'connected',
+        lastSuccessfulConnection: new Date(),
+      };
+      await this.runtimeRepository.save(connectedState);
+      return connectedState;
+    }
+
+    const failedState: RuntimeConnectionState = {
+      ...connectingState,
+      status: 'failed',
+      lastFailure: new Date(),
+      failureReason: result.error ?? 'Transport connection failed',
+      retryCount: state.retryCount + 1,
+    };
+    await this.runtimeRepository.save(failedState);
+    return failedState;
   }
 
   async disconnect(connectionId: string): Promise<RuntimeConnectionState> {
@@ -74,14 +89,27 @@ export class LifecycleManager {
     };
     await this.runtimeRepository.save(disconnectingState);
 
-    const disconnectedState: RuntimeConnectionState = {
-      ...disconnectingState,
-      status: 'disconnected',
-      lastDisconnectTime: new Date(),
-    };
-    await this.runtimeRepository.save(disconnectedState);
+    const result = await this.transport.disconnect(connectionId);
 
-    return disconnectedState;
+    if (result.success) {
+      const disconnectedState: RuntimeConnectionState = {
+        ...disconnectingState,
+        status: 'disconnected',
+        lastDisconnectTime: new Date(),
+      };
+      await this.runtimeRepository.save(disconnectedState);
+      return disconnectedState;
+    }
+
+    const failedState: RuntimeConnectionState = {
+      ...disconnectingState,
+      status: 'failed',
+      lastFailure: new Date(),
+      failureReason: result.error ?? 'Transport disconnect failed',
+      retryCount: state.retryCount + 1,
+    };
+    await this.runtimeRepository.save(failedState);
+    return failedState;
   }
 
   async reconnect(connectionId: string): Promise<RuntimeConnectionState> {
@@ -103,14 +131,27 @@ export class LifecycleManager {
     };
     await this.runtimeRepository.save(connectingState);
 
-    const connectedState: RuntimeConnectionState = {
-      ...connectingState,
-      status: 'connected',
-      lastSuccessfulConnection: new Date(),
-    };
-    await this.runtimeRepository.save(connectedState);
+    const result = await this.transport.connect(connectionId);
 
-    return connectedState;
+    if (result.success) {
+      const connectedState: RuntimeConnectionState = {
+        ...connectingState,
+        status: 'connected',
+        lastSuccessfulConnection: new Date(),
+      };
+      await this.runtimeRepository.save(connectedState);
+      return connectedState;
+    }
+
+    const failedState: RuntimeConnectionState = {
+      ...connectingState,
+      status: 'failed',
+      lastFailure: new Date(),
+      failureReason: result.error ?? 'Transport connection failed',
+      retryCount: state.retryCount + 1,
+    };
+    await this.runtimeRepository.save(failedState);
+    return failedState;
   }
 
   async reset(connectionId: string): Promise<RuntimeConnectionState> {
