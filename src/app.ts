@@ -30,7 +30,7 @@ import {
   httpRequestCounter,
   httpRequestDuration,
 } from './shared/observability/metrics.js';
-import { StdioTransport } from './transport/stdio-transport.js';
+import { RoutedTransport } from './transport/routed-transport.js';
 import type { Transport } from './transport/transport.js';
 
 declare module 'fastify' {
@@ -142,7 +142,16 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   const discoveryCache = new SqliteDiscoveryCache();
 
-  const transport = new StdioTransport(connectionRegistry);
+  const transport = new RoutedTransport(connectionRegistry, {
+    connectionTimeout: config.TRANSPORT_CONNECTION_TIMEOUT,
+    disconnectTimeout: config.TRANSPORT_DISCONNECT_TIMEOUT,
+    initializeTimeout: config.TRANSPORT_INITIALIZE_TIMEOUT,
+    processStartupTimeout: config.TRANSPORT_PROCESS_STARTUP_TIMEOUT,
+    maxConcurrentRequests: config.TRANSPORT_MAX_CONCURRENT_REQUESTS,
+    maxMessageSize: config.TRANSPORT_MAX_MESSAGE_SIZE,
+    maxStdoutBufferSize: config.TRANSPORT_STDOUT_BUFFER_SIZE,
+    maxStderrBufferSize: config.TRANSPORT_STDERR_BUFFER_SIZE,
+  });
   app.decorate('transport', transport);
 
   const discoveryEngine = new DiscoveryEngine(connectionRegistry, transport, discoveryCache);

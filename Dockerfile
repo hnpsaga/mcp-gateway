@@ -26,11 +26,6 @@ COPY drizzle.config.ts ./
 # Build TypeScript
 RUN pnpm build
 
-# Copy SQL migration files into dist/ – tsc does not copy .sql assets.
-# At runtime, database.ts resolves the migrations folder relative to
-# import.meta.dirname which points to dist/persistence/.
-RUN cp -r src/persistence/migrations dist/persistence/migrations
-
 # Strip the `prepare` lifecycle script (husky) from package.json before pruning.
 # Both pnpm install --prod and pnpm prune --prod still fire lifecycle hooks;
 # removing the script from the manifest is the definitive fix.
@@ -50,8 +45,8 @@ LABEL org.opencontainers.image.title="MCP Gateway" \
       org.opencontainers.image.version="1.0.0" \
       org.opencontainers.image.vendor="MCP Gateway" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.source="https://github.com/your-org/mcp-gateway" \
-      org.opencontainers.image.documentation="https://github.com/your-org/mcp-gateway/blob/main/docs/Deployment.md"
+      org.opencontainers.image.source="https://github.com/hnpsaga/mcp-gateway" \
+      org.opencontainers.image.documentation="https://github.com/hnpsaga/mcp-gateway/blob/main/docs/Deployment.md"
 
 # Create a non-root user
 RUN addgroup -g 1001 -S mcpgateway && \
