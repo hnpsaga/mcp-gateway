@@ -15,7 +15,7 @@ export class TransportFactory {
       case 'stdio':
         return new StdioTransport(connectionRegistry);
       case 'streamable-http':
-        return new StreamableHttpTransport();
+        return new StreamableHttpTransport(connectionRegistry);
       default:
         throw new ValidationError(`Unsupported transport type: '${transportType}'`, {
           transportType,

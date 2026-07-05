@@ -1,4 +1,7 @@
 export { BaseTransport } from './base-transport.js';
+export type { HttpClientConfig, HttpClientResult } from './http-client.js';
+export { HttpClient, HttpClientError, HttpClientTimeoutError } from './http-client.js';
+export type { HttpSession, SessionState } from './http-session.js';
 export type { JsonRpcError, JsonRpcResponse, JsonRpcSuccessResponse } from './json-rpc-client.js';
 export { JsonRpcClient } from './json-rpc-client.js';
 export { StdioTransport } from './stdio-transport.js';

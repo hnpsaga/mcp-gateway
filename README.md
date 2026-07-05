@@ -157,6 +157,8 @@ The Connection Management API is available under `/api/v1/connections`. It expos
 
 ### Example: Create a Connection
 
+**Stdio transport:**
+
 ```http
 POST /api/v1/connections
 Content-Type: application/json
@@ -167,6 +169,27 @@ Content-Type: application/json
   "transportConfig": {
     "command": "node",
     "args": ["server.js"]
+  },
+  "tags": ["production"],
+  "metadata": { "environment": "prod" }
+}
+```
+
+**Streamable HTTP transport:**
+
+```http
+POST /api/v1/connections
+Content-Type: application/json
+
+{
+  "name": "My HTTP MCP Server",
+  "transportType": "streamable-http",
+  "transportConfig": {
+    "url": "http://localhost:8080/mcp",
+    "headers": {
+      "Authorization": "Bearer my-token"
+    },
+    "requestTimeout": 30000
   },
   "tags": ["production"],
   "metadata": { "environment": "prod" }
@@ -238,7 +261,11 @@ The test endpoint verifies the connection exists, is enabled, and has a valid co
 
 ### Transport Layer
 
-MCP Gateway implements a production-grade **Stdio Transport** that manages MCP server connections via child processes:
+MCP Gateway implements two production-grade transports for communicating with MCP servers.
+
+#### Stdio Transport
+
+Manages MCP server connections via child processes:
 
 - **Process Management**: MCP servers are spawned as child processes using `child_process.spawn`. The transport manages stdin/stdout/stderr streams, performs the MCP initialize handshake, and monitors process health.
 - **JSON-RPC Communication**: A reusable JSON-RPC 2.0 client handles request/response correlation, configurable timeouts, concurrent requests, protocol error mapping, and notification support.
@@ -247,7 +274,7 @@ MCP Gateway implements a production-grade **Stdio Transport** that manages MCP s
 - **Capability Discovery**: The `tools/list`, `resources/list`, and `prompts/list` MCP methods are called during discovery to enumerate server capabilities.
 - **Execution**: Tools, resources, and prompts are executed by sending the appropriate MCP request (`tools/call`, `resources/read`, `prompts/get`) to the managed process.
 
-**Transport Type**: When creating a connection, use `"transportType": "stdio"` with a `transportConfig` containing `command` and `args`:
+**Configuration** — use `"transportType": "stdio"` with `command` and `args`:
 
 ```json
 {
@@ -259,6 +286,65 @@ MCP Gateway implements a production-grade **Stdio Transport** that manages MCP s
   }
 }
 ```
+
+#### Streamable HTTP Transport
+
+Communicates with MCP servers over HTTP using JSON-RPC 2.0:
+
+- **HTTP Communication**: JSON-RPC requests are sent via HTTP POST to the configured server URL. The reusable HTTP client supports configurable headers, timeouts, and cancellation.
+- **JSON-RPC Reuse**: The existing JSON-RPC 2.0 client is reused for request/response correlation, protocol error mapping, and timeout handling. The transport captures serialized requests and feeds HTTP responses back through the client.
+- **Session Lifecycle**: Each connection creates an isolated session with its own JSON-RPC client, HTTP client, and connection state tracking (connecting, connected, disconnected, failed).
+- **MCP Handshake**: On connect, the transport performs the full MCP initialize handshake — sending `initialize` and receiving the server's capabilities, then sending `notifications/initialized`.
+- **Capability Discovery**: Same MCP methods (`tools/list`, `resources/list`, `prompts/list`) are called over HTTP, producing identical result types as the stdio transport.
+- **Graceful Disconnect**: Pending requests are rejected and the session is cleaned up without process management overhead.
+- **Error Handling**: Connection failures, HTTP errors, timeouts, malformed JSON, and JSON-RPC protocol errors are all handled and mapped to the existing application error hierarchy.
+
+**Configuration** — use `"transportType": "streamable-http"` with a `url`:
+
+```json
+{
+  "name": "My HTTP MCP Server",
+  "transportType": "streamable-http",
+  "transportConfig": {
+    "url": "http://localhost:8080/mcp",
+    "headers": {
+      "Authorization": "Bearer my-token",
+      "X-Custom-Header": "value"
+    },
+    "requestTimeout": 30000
+  }
+}
+```
+
+**Configuration Options:**
+
+| Option           | Type   | Required | Default | Description                                 |
+| :--------------- | :----- | :------- | :------ | :------------------------------------------ |
+| `url`            | string | Yes      | —       | Base URL of the MCP HTTP server             |
+| `headers`        | object | No       | `{}`    | Custom HTTP headers sent with every request |
+| `requestTimeout` | number | No       | `30000` | Request timeout in milliseconds             |
+
+**Transport Architecture:**
+
+```text
+REST API
+      │
+Execution Engine
+      │
+Discovery Engine
+      │
+Transport Interface
+      │
+Streamable HTTP Transport
+      │
+HttpClient ───── JsonRpcClient
+      │
+HTTP POST
+      │
+  MCP Server
+```
+
+The transport layer is fully abstracted — the Discovery Engine and Execution Engine operate identically regardless of whether the underlying transport is stdio or streamable HTTP.
 
 ### Swagger Usage
 
