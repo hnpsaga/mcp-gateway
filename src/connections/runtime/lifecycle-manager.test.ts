@@ -503,6 +503,9 @@ describe('LifecycleManager', () => {
         }),
         getStatus: vi.fn().mockResolvedValue({ connectionId, status: 'connected' }),
         discoverCapabilities: vi.fn(),
+        executeTool: vi.fn(),
+        readResource: vi.fn(),
+        executePrompt: vi.fn(),
         supportsCapability: vi.fn().mockReturnValue(true),
       };
       const isolated = new LifecycleManager(runtimeRepository, connectionRegistry, mockTransport);

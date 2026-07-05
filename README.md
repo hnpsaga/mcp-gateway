@@ -146,7 +146,7 @@ This project enforces high-quality standards through automated pre-commit gates:
 │   │   └── index.ts      # Centralized configuration access
 │   ├── connections/      # Connection registry, lifecycle management, runtime state
 │   ├── discovery/        # Discovery engine, capability models, caching
-│   ├── execution/        # Future: Tool execution engine
+│   ├── execution/        # Execution engine (tool execution, resource retrieval, prompt execution)
 │   ├── operations/       # Future: Operational workflows
 │   ├── routes/
 │   │   └── health.ts     # Routes definition (Health check)
