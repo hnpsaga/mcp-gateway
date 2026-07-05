@@ -1,5 +1,10 @@
 import type { Transport } from './transport.js';
-import type { ConnectResult, DisconnectResult, TransportStatusResult } from './transport-result.js';
+import type {
+  ConnectResult,
+  DisconnectResult,
+  DiscoverCapabilitiesResult,
+  TransportStatusResult,
+} from './transport-result.js';
 
 export abstract class BaseTransport implements Transport {
   async connect(connectionId: string): Promise<ConnectResult> {
@@ -25,7 +30,19 @@ export abstract class BaseTransport implements Transport {
     };
   }
 
+  async discoverCapabilities(connectionId: string): Promise<DiscoverCapabilitiesResult> {
+    return {
+      success: true,
+      connectionId,
+      capabilities: {
+        tools: [],
+        resources: [],
+        prompts: [],
+      },
+    };
+  }
+
   supportsCapability(capability: string): boolean {
-    return ['connect', 'disconnect', 'status'].includes(capability);
+    return ['connect', 'disconnect', 'status', 'discover-capabilities'].includes(capability);
   }
 }

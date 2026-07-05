@@ -144,8 +144,8 @@ This project enforces high-quality standards through automated pre-commit gates:
 │   ├── config/
 │   │   ├── env.ts        # Environment config schema & validation (Zod)
 │   │   └── index.ts      # Centralized configuration access
-│   ├── connections/      # Future: MCP server connections
-│   ├── discovery/        # Future: Service discovery
+│   ├── connections/      # Connection registry, lifecycle management, runtime state
+│   ├── discovery/        # Discovery engine, capability models, caching
 │   ├── execution/        # Future: Tool execution engine
 │   ├── operations/       # Future: Operational workflows
 │   ├── routes/
