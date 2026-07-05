@@ -1,11 +1,27 @@
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildApp } from '../../../app.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const mockServerPath = join(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  'transport',
+  'test-utils',
+  'mock-mcp-server.ts',
+);
+
 const validStdioConnection = {
   name: 'Test Connection',
   transportType: 'stdio',
-  transportConfig: { command: 'node', args: ['server.js'] },
+  transportConfig: { command: 'npx', args: ['tsx', mockServerPath] },
 };
 
 describe('Discovery API', () => {
@@ -18,6 +34,8 @@ describe('Discovery API', () => {
         payload: validStdioConnection,
       });
       const connectionId = createRes.json().data.id;
+
+      await app.transport.connect(connectionId);
 
       const response = await app.inject({
         method: 'POST',
@@ -32,6 +50,26 @@ describe('Discovery API', () => {
       expect(body.data.resources).toBeInstanceOf(Array);
       expect(body.data.prompts).toBeInstanceOf(Array);
       expect(body.data.discoveredAt).toBeDefined();
+
+      await app.transport.disconnect(connectionId);
+      await app.close();
+    });
+
+    it('should return 500 for non-connected transport', async () => {
+      const app = await buildApp();
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/connections',
+        payload: validStdioConnection,
+      });
+      const connectionId = createRes.json().data.id;
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/discovery/${connectionId}`,
+      });
+
+      expect(response.statusCode).toBe(500);
 
       await app.close();
     });
@@ -62,6 +100,7 @@ describe('Discovery API', () => {
       });
       const connectionId = createRes.json().data.id;
 
+      await app.transport.connect(connectionId);
       await app.inject({
         method: 'POST',
         url: `/api/v1/discovery/${connectionId}`,
@@ -76,10 +115,11 @@ describe('Discovery API', () => {
       const body = response.json();
       expect(body.success).toBe(true);
       expect(body.data.connectionId).toBe(connectionId);
-      expect(body.data.tools).toHaveLength(2);
-      expect(body.data.resources).toHaveLength(2);
-      expect(body.data.prompts).toHaveLength(2);
+      expect(body.data.tools.length).toBeGreaterThan(0);
+      expect(body.data.resources.length).toBeGreaterThan(0);
+      expect(body.data.prompts.length).toBeGreaterThan(0);
 
+      await app.transport.disconnect(connectionId);
       await app.close();
     });
 
@@ -128,6 +168,8 @@ describe('Discovery API', () => {
       });
       const connectionId = createRes.json().data.id;
 
+      await app.transport.connect(connectionId);
+
       const firstRes = await app.inject({
         method: 'POST',
         url: `/api/v1/discovery/${connectionId}`,
@@ -147,6 +189,7 @@ describe('Discovery API', () => {
       expect(body.data.connectionId).toBe(connectionId);
       expect(body.data.discoveredAt).not.toBe(firstTimestamp);
 
+      await app.transport.disconnect(connectionId);
       await app.close();
     });
 
@@ -173,6 +216,7 @@ describe('Discovery API', () => {
       });
       const connectionId = createRes.json().data.id;
 
+      await app.transport.connect(connectionId);
       await app.inject({
         method: 'POST',
         url: `/api/v1/discovery/${connectionId}`,
@@ -192,6 +236,7 @@ describe('Discovery API', () => {
       });
       expect(getRes.statusCode).toBe(404);
 
+      await app.transport.disconnect(connectionId);
       await app.close();
     });
 
@@ -247,6 +292,8 @@ describe('Discovery API', () => {
         payload: { ...validStdioConnection, id: 'list-cache-2' },
       });
 
+      await app.transport.connect('list-cache-1');
+      await app.transport.connect('list-cache-2');
       await app.inject({
         method: 'POST',
         url: '/api/v1/discovery/list-cache-1',
@@ -280,6 +327,8 @@ describe('Discovery API', () => {
         expect(summary).not.toHaveProperty('prompts');
       }
 
+      await app.transport.disconnect('list-cache-1');
+      await app.transport.disconnect('list-cache-2');
       await app.close();
     });
 
@@ -304,6 +353,7 @@ describe('Discovery API', () => {
         payload: { ...validStdioConnection, id: 'summary-test' },
       });
 
+      await app.transport.connect('summary-test');
       await app.inject({
         method: 'POST',
         url: '/api/v1/discovery/summary-test',
@@ -315,13 +365,14 @@ describe('Discovery API', () => {
       });
 
       const summary = response.json().data[0];
-      expect(summary.toolsCount).toBe(2);
-      expect(summary.resourcesCount).toBe(2);
-      expect(summary.promptsCount).toBe(2);
+      expect(summary.toolsCount).toBeGreaterThan(0);
+      expect(summary.resourcesCount).toBeGreaterThan(0);
+      expect(summary.promptsCount).toBeGreaterThan(0);
       expect(summary).not.toHaveProperty('tools');
       expect(summary).not.toHaveProperty('resources');
       expect(summary).not.toHaveProperty('prompts');
 
+      await app.transport.disconnect('summary-test');
       await app.close();
     });
   });

@@ -236,6 +236,30 @@ POST /api/v1/connections/:connectionId/test
 
 The test endpoint verifies the connection exists, is enabled, and has a valid configuration. No transport-level communication is performed.
 
+### Transport Layer
+
+MCP Gateway implements a production-grade **Stdio Transport** that manages MCP server connections via child processes:
+
+- **Process Management**: MCP servers are spawned as child processes using `child_process.spawn`. The transport manages stdin/stdout/stderr streams, performs the MCP initialize handshake, and monitors process health.
+- **JSON-RPC Communication**: A reusable JSON-RPC 2.0 client handles request/response correlation, configurable timeouts, concurrent requests, protocol error mapping, and notification support.
+- **Session Lifecycle**: Each connection creates an isolated session with its own child process, JSON-RPC client, and connection state tracking (connecting, connected, disconnected, failed).
+- **Graceful Shutdown**: On disconnect, the transport sends a `SIGTERM` signal followed by a `SIGKILL` timeout to ensure clean process termination.
+- **Capability Discovery**: The `tools/list`, `resources/list`, and `prompts/list` MCP methods are called during discovery to enumerate server capabilities.
+- **Execution**: Tools, resources, and prompts are executed by sending the appropriate MCP request (`tools/call`, `resources/read`, `prompts/get`) to the managed process.
+
+**Transport Type**: When creating a connection, use `"transportType": "stdio"` with a `transportConfig` containing `command` and `args`:
+
+```json
+{
+  "name": "My MCP Server",
+  "transportType": "stdio",
+  "transportConfig": {
+    "command": "node",
+    "args": ["server.js"]
+  }
+}
+```
+
 ### Swagger Usage
 
 All Connection Management endpoints are documented in the generated OpenAPI specification. Visit `/documentation` for the Swagger UI or `/documentation/json` for the raw OpenAPI spec.
@@ -636,8 +660,8 @@ This project enforces high-quality standards through automated pre-commit gates:
 │   │           ├── index.ts       # V1 route registration
 │   │           ├── health.ts      # V1 health endpoint
 │   │           ├── connections.ts # Connection Management API
-│   │           ├── discovery.ts   # Future: Capability discovery
-│   │           ├── execution.ts   # Future: Tool execution
+│   │           ├── discovery.ts   # Capability discovery
+│   │           ├── execution.ts   # Tool execution, resource retrieval, prompt execution
 │   │           ├── ai.ts          # Future: AI interaction
 │   │           └── operations.ts  # Future: Operations
 │   ├── shared/
@@ -645,7 +669,7 @@ This project enforces high-quality standards through automated pre-commit gates:
 │   │   ├── response/     # Reusable response models
 │   │   ├── constants.ts  # Shared constants
 │   │   └── index.ts      # Shared module entry
-│   ├── transport/        # MCP transport abstraction
+│   ├── transport/        # MCP transport abstraction (Stdio, Streamable HTTP, JSON-RPC client)
 │   ├── types/            # Future: Shared type definitions
 │   ├── app.ts            # Fastify instance builder & global error handler
 │   ├── app.test.ts       # Application and API tests

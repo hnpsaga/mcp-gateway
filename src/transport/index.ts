@@ -1,4 +1,6 @@
 export { BaseTransport } from './base-transport.js';
+export type { JsonRpcError, JsonRpcResponse, JsonRpcSuccessResponse } from './json-rpc-client.js';
+export { JsonRpcClient } from './json-rpc-client.js';
 export { StdioTransport } from './stdio-transport.js';
 export { StreamableHttpTransport } from './streamable-http-transport.js';
 export type { Transport } from './transport.js';
