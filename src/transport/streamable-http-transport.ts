@@ -20,7 +20,7 @@ const DEFAULT_REQUEST_TIMEOUT = 30000;
 interface HttpTransportConfig {
   url: string;
   headers?: Record<string, string>;
-  requestTimeout?: number;
+  requestTimeout: number;
 }
 
 function extractTransportConfig(transportConfig: TransportConfig): HttpTransportConfig {
