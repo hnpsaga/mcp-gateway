@@ -54,8 +54,7 @@ README.md
 LICENSE
 GEMINI.md
 
-# TypeScript config
-tsconfig.json
+# TypeScript build info only (tsconfig.json is required by the builder stage)
 tsconfig.tsbuildinfo
 
 # Tooling config
