@@ -1,3 +1,6 @@
+import { initializeTracing } from './shared/observability/index.js';
+initializeTracing();
+
 import { buildApp } from './app.js';
 import { startServer } from './server.js';
 

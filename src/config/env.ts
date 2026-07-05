@@ -8,6 +8,25 @@ const configSchema = z.object({
   PORT: z.coerce.number().int().positive().max(65535).default(3000),
   HOST: z.string().default('127.0.0.1'),
 
+  // Logging and Observability configuration
+  LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  LOG_PRETTY: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
+  LOG_STRUCTURED: z
+    .string()
+    .default('true')
+    .transform((v) => v === 'true'),
+  METRICS_ENABLED: z
+    .string()
+    .default('true')
+    .transform((v) => v === 'true'),
+  OTEL_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
+
   // Transport configuration
   TRANSPORT_LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug', 'trace']).default('info'),
   TRANSPORT_MAX_MESSAGE_SIZE: z.coerce.number().int().positive().default(1048576), // 1MB
@@ -57,6 +76,11 @@ const parsed = configSchema.safeParse({
   NODE_ENV: process.env.NODE_ENV,
   PORT: process.env.PORT,
   HOST: process.env.HOST,
+  LOG_LEVEL: process.env.LOG_LEVEL,
+  LOG_PRETTY: process.env.LOG_PRETTY,
+  LOG_STRUCTURED: process.env.LOG_STRUCTURED,
+  METRICS_ENABLED: process.env.METRICS_ENABLED,
+  OTEL_ENABLED: process.env.OTEL_ENABLED,
   DATABASE_PATH: process.env.DATABASE_PATH,
   DATABASE_FILENAME: process.env.DATABASE_FILENAME,
   DATABASE_WAL_MODE: process.env.DATABASE_WAL_MODE,

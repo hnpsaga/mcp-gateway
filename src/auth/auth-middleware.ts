@@ -12,7 +12,7 @@ export interface AuthMiddlewareOptions {
   swaggerAuthenticate: boolean;
 }
 
-const PUBLIC_PATHS = ['/health', '/api/v1/health'];
+const PUBLIC_PATHS = ['/health', '/api/v1/health', '/live', '/ready', '/info'];
 
 export function constantTimeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);

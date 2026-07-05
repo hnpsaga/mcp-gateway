@@ -1,5 +1,6 @@
 import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUi from '@fastify/swagger-ui';
+import { SpanStatusCode } from '@opentelemetry/api';
 import fastify, { type FastifyInstance } from 'fastify';
 
 import { createAuthHook } from './auth/index.js';
@@ -18,6 +19,18 @@ import {
 } from './persistence/index.js';
 import { v1Routes } from './routes/api/v1/index.js';
 import { healthRoutes } from './routes/health.js';
+import {
+  createTelemetryProxy,
+  logger,
+  shutdownTracing,
+  telemetryContextStorage,
+  tracer,
+} from './shared/observability/index.js';
+import {
+  httpActiveRequests,
+  httpRequestCounter,
+  httpRequestDuration,
+} from './shared/observability/metrics.js';
 import { StdioTransport } from './transport/stdio-transport.js';
 import type { Transport } from './transport/transport.js';
 
@@ -28,29 +41,121 @@ declare module 'fastify' {
     executionEngine: ExecutionEngine;
     transport: Transport;
   }
+  interface FastifyRequest {
+    startTime?: [number, number];
+    span?: import('@opentelemetry/api').Span;
+  }
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = fastify({
-    logger: true,
+    loggerInstance: logger,
     requestIdHeader: 'request-id',
+  });
+
+  logger.info({ version: '1.0.0' }, 'MCP Gateway starting...');
+
+  // Request tracing, metrics, and correlation context
+  app.addHook('onRequest', (request, reply, done) => {
+    request.startTime = process.hrtime();
+    if (config.METRICS_ENABLED) {
+      httpActiveRequests.inc();
+    }
+
+    if (config.OTEL_ENABLED) {
+      const span = tracer.startSpan(
+        `HTTP ${request.method} ${request.routeOptions?.url || request.url}`,
+        {
+          attributes: {
+            'http.method': request.method,
+            'http.url': request.url,
+            'request.id': request.id,
+          },
+        },
+      );
+      request.span = span;
+    }
+
+    const context = {
+      requestId: request.id,
+      logger: request.log,
+    };
+
+    telemetryContextStorage.run(context, () => {
+      done();
+    });
+  });
+
+  app.addHook('onError', (request, _reply, error, done) => {
+    const span = request.span;
+    if (span) {
+      span.recordException(error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+    }
+    done();
+  });
+
+  app.addHook('onResponse', (request, reply, done) => {
+    const startTime = request.startTime;
+    if (startTime) {
+      const diff = process.hrtime(startTime);
+      const durationSec = diff[0] + diff[1] / 1e9;
+      if (config.METRICS_ENABLED) {
+        const route = request.routeOptions?.url || request.url;
+        httpRequestCounter.inc({
+          method: request.method,
+          route,
+          status_code: reply.statusCode,
+        });
+        httpRequestDuration.observe(
+          {
+            method: request.method,
+            route,
+            status_code: reply.statusCode,
+          },
+          durationSec,
+        );
+        httpActiveRequests.dec();
+      }
+    }
+
+    const span = request.span;
+    if (span) {
+      span.setAttribute('http.status_code', reply.statusCode);
+      if (reply.statusCode >= 400) {
+        span.setStatus({ code: SpanStatusCode.ERROR });
+      } else {
+        span.setStatus({ code: SpanStatusCode.OK });
+      }
+      span.end();
+    }
+    done();
   });
 
   const dbConfig = buildDatabaseConfig(config);
   const db = initializeDatabase(dbConfig);
   runMigrations(db);
 
-  const connectionRepository = new SqliteConnectionRepository();
-  const connectionRegistry = new ConnectionRegistry(connectionRepository);
+  const rawRepository = new SqliteConnectionRepository();
+  const connectionRepository = createTelemetryProxy(rawRepository, 'ConnectionRepository');
+
+  const rawRegistry = new ConnectionRegistry(connectionRepository);
+  const connectionRegistry = createTelemetryProxy(rawRegistry, 'ConnectionRegistry');
   app.decorate('connectionRegistry', connectionRegistry);
 
-  const discoveryCache = new SqliteDiscoveryCache();
-  const transport = new StdioTransport(connectionRegistry);
+  const rawCache = new SqliteDiscoveryCache();
+  const discoveryCache = createTelemetryProxy(rawCache, 'DiscoveryCache');
+
+  const rawTransport = new StdioTransport(connectionRegistry);
+  const transport = createTelemetryProxy(rawTransport, 'Transport');
   app.decorate('transport', transport);
-  const discoveryEngine = new DiscoveryEngine(connectionRegistry, transport, discoveryCache);
+
+  const rawDiscoveryEngine = new DiscoveryEngine(connectionRegistry, transport, discoveryCache);
+  const discoveryEngine = createTelemetryProxy(rawDiscoveryEngine, 'DiscoveryEngine');
   app.decorate('discoveryEngine', discoveryEngine);
 
-  const executionEngine = new ExecutionEngine(connectionRegistry, discoveryEngine, transport);
+  const rawExecutionEngine = new ExecutionEngine(connectionRegistry, discoveryEngine, transport);
+  const executionEngine = createTelemetryProxy(rawExecutionEngine, 'ExecutionEngine');
   app.decorate('executionEngine', executionEngine);
 
   const openapi: Record<string, unknown> = {
@@ -95,9 +200,11 @@ export async function buildApp(): Promise<FastifyInstance> {
     done();
   });
 
-  app.addHook('onClose', (_app, done) => {
+  app.addHook('onClose', async (_app) => {
+    logger.info('MCP Gateway shutting down...');
     closeDatabase();
-    done();
+    await shutdownTracing();
+    logger.info('MCP Gateway shut down complete');
   });
 
   app.addHook(
@@ -117,5 +224,5 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(v1Routes, { prefix: '/api/v1' });
 
-  return app;
+  return app as unknown as FastifyInstance;
 }
