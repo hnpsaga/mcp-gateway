@@ -31,8 +31,10 @@ RUN pnpm build
 # import.meta.dirname which points to dist/persistence/.
 RUN cp -r src/persistence/migrations dist/persistence/migrations
 
-# Prune to production-only deps (re-uses pnpm store from above)
-RUN pnpm install --prod --frozen-lockfile
+# Prune to production-only deps.
+# HUSKY=0 prevents the `prepare` lifecycle hook from calling the now-absent
+# husky binary (it is a devDependency removed by --prod).
+RUN HUSKY=0 pnpm install --prod --frozen-lockfile
 
 ###############################################################################
 # Stage 2: Runtime
