@@ -8,6 +8,39 @@ A lightweight, self-hosted REST gateway for managing and interacting with Model 
 
 - **Node.js**: `v22.x` (LTS) or higher
 - **pnpm**: `v10.x` or higher
+- **Docker** _(optional)_: for containerised deployment
+
+---
+
+## 🐳 Docker Quick Start
+
+The fastest way to run MCP Gateway is with Docker:
+
+```bash
+# Build the image
+docker build -t mcp-gateway:latest .
+
+# Run with a persistent data volume
+docker run -d \
+  --name mcp-gateway \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v mcp-gateway-data:/app/data \
+  -e NODE_ENV=production \
+  mcp-gateway:latest
+
+# Verify it is running
+curl http://localhost:3000/health
+```
+
+Or use Docker Compose (recommended for production):
+
+```bash
+docker compose up -d
+curl http://localhost:3000/health
+```
+
+See the full [Deployment Guide](docs/Deployment.md) for reverse proxy setup, auth configuration, backups, and more.
 
 ---
 
@@ -18,6 +51,59 @@ Install the project dependencies using `pnpm`:
 ```bash
 pnpm install
 ```
+
+---
+
+## Deployment
+
+MCP Gateway ships with first-class Docker support.
+
+### Docker
+
+```bash
+# Build
+pnpm docker:build        # or: docker build -t mcp-gateway:latest .
+
+# Run (production)
+docker run -d \
+  --name mcp-gateway \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v mcp-gateway-data:/app/data \
+  -e NODE_ENV=production \
+  -e AUTH_ENABLED=true \
+  -e API_KEYS=your-secret-key \
+  mcp-gateway:latest
+```
+
+### Docker Compose
+
+```bash
+# Copy and edit the environment file
+cp .env.example .env
+
+# Start all services
+docker compose up -d
+
+# Tail logs
+docker compose logs -f
+
+# Update after a code change
+docker compose build --no-cache && docker compose up -d
+```
+
+### Key Endpoints
+
+| Endpoint         | Description                  |
+| :--------------- | :--------------------------- |
+| `/health`        | Health check (always public) |
+| `/ready`         | Readiness probe              |
+| `/live`          | Liveness probe               |
+| `/metrics`       | Prometheus metrics           |
+| `/info`          | Service information          |
+| `/documentation` | Swagger UI                   |
+
+For complete deployment documentation including reverse proxy (Nginx, Traefik), production recommendations, and troubleshooting, see **[docs/Deployment.md](docs/Deployment.md)**.
 
 ---
 
@@ -1035,5 +1121,10 @@ This project enforces high-quality standards through automated pre-commit gates:
 ├── pnpm-lock.yaml        # Package manager lock file
 ├── prettier.config.js    # Prettier configuration details
 ├── tsconfig.json         # TypeScript configuration mapping
-└── vitest.config.ts      # Vitest testing environment configuration
+├── vitest.config.ts      # Vitest testing environment configuration
+├── Dockerfile            # Multi-stage production Docker image
+├── docker-compose.yml    # Docker Compose for production deployment
+├── .env.example          # Environment variable reference (all vars documented)
+├── .dockerignore         # Files excluded from the Docker build context
+└── CHANGELOG.md          # Project changelog (Keep a Changelog format)
 ```
