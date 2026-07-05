@@ -1,12 +1,11 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
 
-// Load .env file
 dotenv.config();
 
 const configSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.coerce.number().default(3000),
+  PORT: z.coerce.number().int().positive().max(65535).default(3000),
   HOST: z.string().default('127.0.0.1'),
 });
 
@@ -17,7 +16,17 @@ const parsed = configSchema.safeParse({
 });
 
 if (!parsed.success) {
-  console.error('❌ Invalid environment configuration:', parsed.error.format());
+  console.error('Invalid environment configuration:');
+  const formatted = parsed.error.format();
+  for (const [key, value] of Object.entries(formatted)) {
+    if (key === '_errors') continue;
+    const issues = value as { _errors: string[] };
+    if (issues._errors?.length) {
+      for (const message of issues._errors) {
+        console.error(`  - ${key}: ${message}`);
+      }
+    }
+  }
   process.exit(1);
 }
 
