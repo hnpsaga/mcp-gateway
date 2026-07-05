@@ -27,6 +27,30 @@ const configSchema = z.object({
     .default('true')
     .transform((v) => v !== 'false'),
   DATABASE_BUSY_TIMEOUT: z.coerce.number().int().positive().default(5000),
+
+  // Authentication configuration
+  AUTH_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
+  API_KEYS: z
+    .string()
+    .default('')
+    .transform((v) =>
+      v
+        .split(',')
+        .map((k) => k.trim())
+        .filter(Boolean),
+    ),
+  AUTH_HEADER_NAME: z.string().default('x-api-key'),
+  AUTH_BEARER_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
+  AUTH_SWAGGER_AUTHENTICATE: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 const parsed = configSchema.safeParse({
@@ -37,6 +61,12 @@ const parsed = configSchema.safeParse({
   DATABASE_FILENAME: process.env.DATABASE_FILENAME,
   DATABASE_WAL_MODE: process.env.DATABASE_WAL_MODE,
   DATABASE_BUSY_TIMEOUT: process.env.DATABASE_BUSY_TIMEOUT,
+
+  AUTH_ENABLED: process.env.AUTH_ENABLED,
+  API_KEYS: process.env.API_KEYS,
+  AUTH_HEADER_NAME: process.env.AUTH_HEADER_NAME,
+  AUTH_BEARER_ENABLED: process.env.AUTH_BEARER_ENABLED,
+  AUTH_SWAGGER_AUTHENTICATE: process.env.AUTH_SWAGGER_AUTHENTICATE,
 });
 
 if (!parsed.success) {

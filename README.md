@@ -49,6 +49,25 @@ Default variables:
 | `TRANSPORT_CONNECTION_TIMEOUT`      | number | `30000`    | Total connection timeout in milliseconds                                  |
 | `TRANSPORT_DISCONNECT_TIMEOUT`      | number | `5000`     | Graceful disconnect timeout in milliseconds                               |
 
+### Authentication Configuration
+
+| Variable                    | Type    | Default     | Description                                                  |
+| :-------------------------- | :------ | :---------- | :----------------------------------------------------------- |
+| `AUTH_ENABLED`              | boolean | `false`     | Enable API key authentication for all endpoints              |
+| `API_KEYS`                  | string  | `""`        | Comma-separated list of valid API keys                       |
+| `AUTH_HEADER_NAME`          | string  | `x-api-key` | HTTP header name for API key authentication                  |
+| `AUTH_BEARER_ENABLED`       | boolean | `false`     | Allow API key via `Authorization: Bearer <key>` header       |
+| `AUTH_SWAGGER_AUTHENTICATE` | boolean | `false`     | Require authentication to access Swagger UI and OpenAPI spec |
+
+**Example: Enable authentication:**
+
+```bash
+AUTH_ENABLED=true
+API_KEYS=sk-prod-abc123,sk-prod-def456
+```
+
+Only the `/health` and `/api/v1/health` endpoints remain publicly accessible when authentication is enabled. All other endpoints require a valid API key.
+
 ---
 
 ## Running Locally
@@ -126,6 +145,64 @@ Every HTTP request receives a unique request ID. The ID is:
 - Returned in the `request-id` response header
 
 This foundation supports future logging, tracing, and request correlation without requiring immediate observability implementation.
+
+## Authentication
+
+MCP Gateway supports API key authentication for all REST API endpoints. Authentication is implemented as a middleware layer at the HTTP boundary — application services remain entirely unaware of authentication.
+
+### How It Works
+
+When enabled, every request (except `/health` and `/api/v1/health`) must include a valid API key via the configured header. The middleware validates credentials before any route handler executes.
+
+### Configuration Example
+
+```bash
+AUTH_ENABLED=true
+API_KEYS=sk-prod-abc123,sk-prod-def456
+AUTH_HEADER_NAME=x-api-key
+AUTH_BEARER_ENABLED=false
+AUTH_SWAGGER_AUTHENTICATE=false
+```
+
+### Making Authenticated Requests
+
+**Using the default header:**
+
+```http
+GET /api/v1/connections
+X-API-Key: sk-prod-abc123
+```
+
+**Using Bearer token (when enabled):**
+
+```http
+GET /api/v1/connections
+Authorization: Bearer sk-prod-abc123
+```
+
+### Key Rotation
+
+API keys are configured through environment variables. To rotate keys:
+
+1. Add the new key to `API_KEYS` (comma-separated).
+2. Restart the Gateway.
+3. Update clients to use the new key.
+4. Remove the old key from `API_KEYS`.
+5. Restart the Gateway again.
+
+Multiple keys can be active simultaneously, allowing zero-downtime rotation.
+
+### Local Development
+
+Authentication is disabled by default (`AUTH_ENABLED=false`). During local development, no API key is required.
+
+### Production Deployment Recommendations
+
+- Place the Gateway behind a reverse proxy (NGINX, Caddy) for TLS termination.
+- Use strong, randomly generated API keys.
+- Store API keys in a secrets manager or environment variable management system.
+- Enable `AUTH_BEARER_ENABLED` only if your tooling prefers Bearer tokens.
+- Protect Swagger documentation by setting `AUTH_SWAGGER_AUTHENTICATE=true` in production.
 
 ### Health Endpoint
 
