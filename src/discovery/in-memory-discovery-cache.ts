@@ -1,4 +1,4 @@
-import type { DiscoveryCache } from './discovery-cache.js';
+import type { DiscoveryCache, DiscoveryCacheEntry } from './discovery-cache.js';
 import type { DiscoveryResult } from './discovery-types.js';
 
 export class InMemoryDiscoveryCache implements DiscoveryCache {
@@ -22,5 +22,12 @@ export class InMemoryDiscoveryCache implements DiscoveryCache {
 
   has(connectionId: string): boolean {
     return this.cache.has(connectionId);
+  }
+
+  entries(): DiscoveryCacheEntry[] {
+    return Array.from(this.cache.entries()).map(([connectionId, result]) => ({
+      connectionId,
+      result,
+    }));
   }
 }

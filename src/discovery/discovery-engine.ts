@@ -3,7 +3,7 @@ import { InternalError, NotFoundError, ValidationError } from '../shared/errors/
 import type { Transport } from '../transport/transport.js';
 import type { DiscoveryCache } from './discovery-cache.js';
 import { discoveryResultSchema } from './discovery-schema.js';
-import type { DiscoveryResult } from './discovery-types.js';
+import type { CachedDiscoverySummary, DiscoveryResult } from './discovery-types.js';
 
 export class DiscoveryEngine {
   constructor(
@@ -63,6 +63,16 @@ export class DiscoveryEngine {
 
   async refresh(connectionId: string): Promise<DiscoveryResult> {
     return this.discover(connectionId);
+  }
+
+  listCachedSummaries(): CachedDiscoverySummary[] {
+    return this.cache.entries().map(({ connectionId, result }) => ({
+      connectionId,
+      discoveredAt: result.discoveredAt,
+      toolsCount: result.tools.length,
+      resourcesCount: result.resources.length,
+      promptsCount: result.prompts.length,
+    }));
   }
 
   clearCache(connectionId?: string): void {
