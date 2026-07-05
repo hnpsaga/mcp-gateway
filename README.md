@@ -58,13 +58,68 @@ pnpm start
 
 ---
 
-## API Endpoints
+## REST API
+
+MCP Gateway exposes a REST API under the `/api/v1` base path. All future endpoints will be registered beneath this version prefix.
+
+### API Versioning
+
+- Current version: `v1`
+- Base path: `/api/v1`
+- Versioning is URL-based (`/api/v1/...`)
+- No breaking changes are introduced within a single version
+
+### OpenAPI Documentation
+
+The API is documented using OpenAPI 3.0, automatically generated from route schemas.
+
+- **Swagger UI**: `/documentation` (development only)
+- **OpenAPI JSON**: `/documentation/json`
+- Documentation stays synchronized with implementation through decorators and schemas applied directly to route definitions.
+
+### Response Format
+
+All API responses follow a consistent format:
+
+**Success:**
+
+```json
+{
+  "success": true,
+  "data": {}
+}
+```
+
+**Error:**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable description",
+    "details": {}
+  }
+}
+```
+
+### Request Identifiers
+
+Every HTTP request receives a unique request ID. The ID is:
+
+- Generated automatically if not provided
+- Accepted via the `request-id` header
+- Returned in the `request-id` response header
+
+This foundation supports future logging, tracing, and request correlation without requiring immediate observability implementation.
+
+### Health Endpoint
+
+**Root-level** (legacy, always available):
 
 ### `GET /health`
 
 Returns the current health status of the service.
-
-**Response:**
 
 ```json
 {
@@ -74,6 +129,12 @@ Returns the current health status of the service.
   "timestamp": "2026-01-01T00:00:00.000Z"
 }
 ```
+
+**Versioned** (available under the API prefix):
+
+### `GET /api/v1/health`
+
+Same response as the root-level health endpoint.
 
 ---
 
@@ -147,9 +208,23 @@ This project enforces high-quality standards through automated pre-commit gates:
 │   ├── connections/      # Connection registry, lifecycle management, runtime state
 │   ├── discovery/        # Discovery engine, capability models, caching
 │   ├── execution/        # Execution engine (tool execution, resource retrieval, prompt execution)
+│   ├── lib/
+│   │   └── api/          # REST API infrastructure
+│   │       ├── index.ts          # API barrel
+│   │       ├── error-handler.ts  # HTTP error mapping
+│   │       └── response.ts       # Response format helpers
 │   ├── operations/       # Future: Operational workflows
 │   ├── routes/
-│   │   └── health.ts     # Routes definition (Health check)
+│   │   ├── health.ts     # Root-level health check
+│   │   └── api/
+│   │       └── v1/       # API v1 route modules
+│   │           ├── index.ts       # V1 route registration
+│   │           ├── health.ts      # V1 health endpoint
+│   │           ├── connections.ts # Future: Connection management
+│   │           ├── discovery.ts   # Future: Capability discovery
+│   │           ├── execution.ts   # Future: Tool execution
+│   │           ├── ai.ts          # Future: AI interaction
+│   │           └── operations.ts  # Future: Operations
 │   ├── shared/
 │   │   ├── errors/       # Application error hierarchy
 │   │   ├── response/     # Reusable response models
@@ -158,7 +233,7 @@ This project enforces high-quality standards through automated pre-commit gates:
 │   ├── transport/        # MCP transport abstraction
 │   ├── types/            # Future: Shared type definitions
 │   ├── app.ts            # Fastify instance builder & global error handler
-│   ├── app.test.ts       # Application and health endpoint tests
+│   ├── app.test.ts       # Application and API tests
 │   ├── server.ts         # Server listen & graceful shutdown logic
 │   ├── server.test.ts    # Server startup & process event tests
 │   └── index.ts          # Application entrypoint
