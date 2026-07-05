@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConflictError, NotFoundError } from '../../shared/errors/index.js';
+import { StdioTransport } from '../../transport/stdio-transport.js';
+import type { Transport } from '../../transport/transport.js';
 import type { CreateConnectionInput } from '../connection.js';
 import { ConnectionRegistry } from '../connection-registry.js';
 import { InMemoryConnectionRepository } from '../in-memory-connection-repository.js';
@@ -11,6 +13,7 @@ describe('LifecycleManager', () => {
   let lifecycleManager: LifecycleManager;
   let runtimeRepository: InMemoryRuntimeStateRepository;
   let connectionRegistry: ConnectionRegistry;
+  let transport: Transport;
   let connectionId: string;
 
   const validInput: CreateConnectionInput = {
@@ -23,7 +26,8 @@ describe('LifecycleManager', () => {
     runtimeRepository = new InMemoryRuntimeStateRepository();
     const connectionRepository = new InMemoryConnectionRepository();
     connectionRegistry = new ConnectionRegistry(connectionRepository);
-    lifecycleManager = new LifecycleManager(runtimeRepository, connectionRegistry);
+    transport = new StdioTransport();
+    lifecycleManager = new LifecycleManager(runtimeRepository, connectionRegistry, transport);
 
     const connection = await connectionRegistry.register(validInput);
     connectionId = connection.id;
@@ -366,6 +370,147 @@ describe('LifecycleManager', () => {
       await lifecycleManager.fail(connectionId, 'error');
       state = await lifecycleManager.reset(connectionId);
       expect(state.status).toBe('registered');
+    });
+  });
+
+  describe('transport integration', () => {
+    it('should call transport.connect during connect', async () => {
+      const connectSpy = vi.spyOn(transport, 'connect');
+      await lifecycleManager.initialize(connectionId);
+      await lifecycleManager.connect(connectionId);
+
+      expect(connectSpy).toHaveBeenCalledWith(connectionId);
+    });
+
+    it('should transition to failed when transport.connect fails', async () => {
+      vi.spyOn(transport, 'connect').mockResolvedValue({
+        success: false,
+        connectionId,
+        status: 'failed',
+        error: 'Connection refused',
+      });
+
+      await lifecycleManager.initialize(connectionId);
+      const state = await lifecycleManager.connect(connectionId);
+
+      expect(state.status).toBe('failed');
+      expect(state.failureReason).toBe('Connection refused');
+      expect(state.lastFailure).toBeInstanceOf(Date);
+      expect(state.retryCount).toBe(1);
+    });
+
+    it('should call transport.disconnect during disconnect', async () => {
+      const disconnectSpy = vi.spyOn(transport, 'disconnect');
+      await lifecycleManager.initialize(connectionId);
+      await lifecycleManager.connect(connectionId);
+      await lifecycleManager.disconnect(connectionId);
+
+      expect(disconnectSpy).toHaveBeenCalledWith(connectionId);
+    });
+
+    it('should transition to failed when transport.disconnect fails', async () => {
+      vi.spyOn(transport, 'disconnect').mockResolvedValue({
+        success: false,
+        connectionId,
+        status: 'failed',
+        error: 'Disconnect failed',
+      });
+
+      await lifecycleManager.initialize(connectionId);
+      await lifecycleManager.connect(connectionId);
+      const state = await lifecycleManager.disconnect(connectionId);
+
+      expect(state.status).toBe('failed');
+      expect(state.failureReason).toBe('Disconnect failed');
+    });
+
+    it('should call transport.connect during reconnect', async () => {
+      const connectSpy = vi.spyOn(transport, 'connect');
+      await lifecycleManager.initialize(connectionId);
+      await lifecycleManager.connect(connectionId);
+      await lifecycleManager.disconnect(connectionId);
+      await lifecycleManager.reconnect(connectionId);
+
+      expect(connectSpy).toHaveBeenCalledWith(connectionId);
+    });
+
+    it('should transition to failed when reconnect transport fails', async () => {
+      vi.spyOn(transport, 'connect')
+        .mockResolvedValueOnce({ success: true, connectionId, status: 'connected' })
+        .mockResolvedValueOnce({
+          success: false,
+          connectionId,
+          status: 'failed',
+          error: 'Reconnection refused',
+        });
+
+      await lifecycleManager.initialize(connectionId);
+      await lifecycleManager.connect(connectionId);
+      await lifecycleManager.disconnect(connectionId);
+      const state = await lifecycleManager.reconnect(connectionId);
+
+      expect(state.status).toBe('failed');
+      expect(state.failureReason).toBe('Reconnection refused');
+      expect(state.retryCount).toBe(1);
+    });
+
+    it('should use default error message when transport connect fails without reason', async () => {
+      vi.spyOn(transport, 'connect').mockResolvedValue({
+        success: false,
+        connectionId,
+        status: 'failed',
+      });
+
+      await lifecycleManager.initialize(connectionId);
+      const state = await lifecycleManager.connect(connectionId);
+
+      expect(state.status).toBe('failed');
+      expect(state.failureReason).toBe('Transport connection failed');
+    });
+
+    it('should use default error message when transport disconnect fails without reason', async () => {
+      vi.spyOn(transport, 'disconnect').mockResolvedValue({
+        success: false,
+        connectionId,
+        status: 'failed',
+      });
+
+      await lifecycleManager.initialize(connectionId);
+      await lifecycleManager.connect(connectionId);
+      const state = await lifecycleManager.disconnect(connectionId);
+
+      expect(state.status).toBe('failed');
+      expect(state.failureReason).toBe('Transport disconnect failed');
+    });
+
+    it('should not modify the connection definition when transport operations occur', async () => {
+      const connection = await connectionRegistry.get(connectionId);
+      await lifecycleManager.initialize(connectionId);
+      await lifecycleManager.connect(connectionId);
+      await lifecycleManager.disconnect(connectionId);
+
+      const connectionAfter = await connectionRegistry.get(connectionId);
+      expect(connectionAfter).toEqual(connection);
+    });
+
+    it('should handle inline transport mock for per-test isolation', async () => {
+      const mockTransport: Transport = {
+        connect: vi.fn().mockResolvedValue({ success: true, connectionId, status: 'connected' }),
+        disconnect: vi.fn().mockResolvedValue({
+          success: true,
+          connectionId,
+          status: 'disconnected',
+        }),
+        getStatus: vi.fn().mockResolvedValue({ connectionId, status: 'connected' }),
+        supportsCapability: vi.fn().mockReturnValue(true),
+      };
+      const isolated = new LifecycleManager(runtimeRepository, connectionRegistry, mockTransport);
+
+      await isolated.initialize(connectionId);
+      const state = await isolated.connect(connectionId);
+
+      expect(state.status).toBe('connected');
+      expect(mockTransport.connect).toHaveBeenCalledWith(connectionId);
     });
   });
 

@@ -155,7 +155,7 @@ This project enforces high-quality standards through automated pre-commit gates:
 │   │   ├── response/     # Reusable response models
 │   │   ├── constants.ts  # Shared constants
 │   │   └── index.ts      # Shared module entry
-│   ├── transport/        # Future: MCP transport layer
+│   ├── transport/        # MCP transport abstraction
 │   ├── types/            # Future: Shared type definitions
 │   ├── app.ts            # Fastify instance builder & global error handler
 │   ├── app.test.ts       # Application and health endpoint tests
