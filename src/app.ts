@@ -9,12 +9,14 @@ import { ApiError } from './lib/api/error-handler.js';
 import { v1Routes } from './routes/api/v1/index.js';
 import { healthRoutes } from './routes/health.js';
 import { StdioTransport } from './transport/stdio-transport.js';
+import type { Transport } from './transport/transport.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
     connectionRegistry: ConnectionRegistry;
     discoveryEngine: DiscoveryEngine;
     executionEngine: ExecutionEngine;
+    transport: Transport;
   }
 }
 
@@ -29,7 +31,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.decorate('connectionRegistry', connectionRegistry);
 
   const discoveryCache = new InMemoryDiscoveryCache();
-  const transport = new StdioTransport();
+  const transport = new StdioTransport(connectionRegistry);
+  app.decorate('transport', transport);
   const discoveryEngine = new DiscoveryEngine(connectionRegistry, transport, discoveryCache);
   app.decorate('discoveryEngine', discoveryEngine);
 
