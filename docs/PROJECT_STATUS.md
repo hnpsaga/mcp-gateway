@@ -12,6 +12,16 @@ The architecture is intentionally modular. Domain services remain framework-inde
 
 The project goal for v1 is to provide a production-ready, self-hosted MCP control plane that is straightforward to operate, easy to inspect, and compatible with standard deployment and observability tooling.
 
+## Platform
+
+The project currently targets:
+
+- Node.js 22+
+- TypeScript
+- SQLite
+- Linux, macOS, and Windows through Node.js compatibility
+- Docker as the primary production deployment platform
+
 ## Current Architecture
 
 MCP Gateway is organized around the following high-level components:
@@ -100,11 +110,25 @@ MCP Gateway is organized around the following high-level components:
 - **SQLite-first deployment model**: SQLite keeps v1 deployment simple while still supporting the intended self-hosted production use case.
 - **Docker-first packaging**: Docker and Docker Compose provide the primary production deployment path.
 
+## Engineering Philosophy
+
+The project intentionally prioritizes:
+
+- Explicit implementations over hidden abstractions
+- Composition over unnecessary inheritance
+- Framework-independent domain services
+- Thin REST controllers
+- Standards-compliant MCP implementation
+- Conservative dependency usage
+- Production readiness before feature expansion
+
+These principles guided the implementation throughout development and should continue to guide future contributions.
+
 ## Current Project Status
 
 Feature development for v1 is complete.
 
-The project is at Release Candidate 1 (RC1). The repository is considered production-ready from an engineering implementation perspective. Remaining work before v1.0 consists of manual validation, real-world testing against representative MCP servers, documentation verification, and the final release decision.
+The project is at Release Candidate 1 (RC1). The engineering implementation is considered production-ready. The remaining work before v1.0 focuses on manual validation, real-world compatibility testing, documentation verification, and the final release decision.
 
 ## Known Limitations
 
@@ -156,3 +180,7 @@ The project is considered Release Candidate 1. Remaining work before v1.0 is int
 - Real-world MCP server testing.
 - Documentation verification.
 - Final release decision.
+
+---
+
+This document reflects the repository state at Release Candidate 1 (RC1). It should be updated only when significant architectural or capability changes are introduced in future releases.
