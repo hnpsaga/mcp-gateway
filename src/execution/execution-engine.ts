@@ -1,6 +1,8 @@
 import type { ConnectionRegistry } from '../connections/connection-registry.js';
 import type { DiscoveryEngine } from '../discovery/discovery-engine.js';
 import { NotFoundError } from '../shared/errors/index.js';
+import { getLogger, sanitize, traceSpan } from '../shared/observability/index.js';
+import { executionCounter, executionDuration } from '../shared/observability/metrics.js';
 import type { Transport } from '../transport/transport.js';
 import type {
   ExecutePromptRequest,
@@ -19,120 +21,234 @@ export class ExecutionEngine {
   ) {}
 
   async executeTool(request: ExecuteToolRequest): Promise<ExecuteToolResponse> {
+    const start = process.hrtime();
     const requestedAt = new Date();
+    const activeLogger = getLogger().child({ component: 'ExecutionEngine' });
+    activeLogger.info({ args: [sanitize(request)] }, 'Starting ExecutionEngine.executeTool');
 
-    await this.ensureConnectionExists(request.connectionId);
-    await this.ensureToolExists(request.connectionId, request.toolName);
+    return traceSpan('ExecutionEngine.executeTool', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'ExecutionEngine');
+        span.setAttribute('method', 'executeTool');
+        span.setAttribute('connectionId', request.connectionId);
+        span.setAttribute('toolName', request.toolName);
+      }
 
-    const transportResult = await this.transport.executeTool(
-      request.connectionId,
-      request.toolName,
-      request.arguments,
-    );
+      try {
+        await this.ensureConnectionExists(request.connectionId);
+        await this.ensureToolExists(request.connectionId, request.toolName);
 
-    const executedAt = new Date();
+        const transportResult = await this.transport.executeTool(
+          request.connectionId,
+          request.toolName,
+          request.arguments,
+        );
 
-    if (!transportResult.success) {
-      return {
-        connectionId: request.connectionId,
-        toolName: request.toolName,
-        arguments: request.arguments,
-        requestedAt,
-        executedAt,
-        status: 'error',
-        error: {
-          code: 'EXECUTION_ERROR',
-          message: transportResult.error ?? 'Tool execution failed',
-        },
-      };
-    }
+        const executedAt = new Date();
+        const diff = process.hrtime(start);
+        const durationSec = diff[0] + diff[1] / 1e9;
+        const durationMs = durationSec * 1000;
 
-    return {
-      connectionId: request.connectionId,
-      toolName: request.toolName,
-      arguments: request.arguments,
-      requestedAt,
-      executedAt,
-      status: 'success',
-      result: transportResult.result,
-    };
+        if (!transportResult.success) {
+          const response: ExecuteToolResponse = {
+            connectionId: request.connectionId,
+            toolName: request.toolName,
+            arguments: request.arguments,
+            requestedAt,
+            executedAt,
+            status: 'error',
+            error: {
+              code: 'EXECUTION_ERROR',
+              message: transportResult.error ?? 'Tool execution failed',
+            },
+          };
+          executionCounter.inc({ type: 'tool', status: 'failure' });
+          executionDuration.observe({ type: 'tool', status: 'failure' }, durationSec);
+          activeLogger.error(
+            { durationMs, error: response.error },
+            `Error in ExecutionEngine.executeTool: ${response.error?.message}`,
+          );
+          return response;
+        }
+
+        const response: ExecuteToolResponse = {
+          connectionId: request.connectionId,
+          toolName: request.toolName,
+          arguments: request.arguments,
+          requestedAt,
+          executedAt,
+          status: 'success',
+          result: transportResult.result,
+        };
+
+        executionCounter.inc({ type: 'tool', status: 'success' });
+        executionDuration.observe({ type: 'tool', status: 'success' }, durationSec);
+        activeLogger.info({ durationMs }, 'Completed ExecutionEngine.executeTool successfully');
+        return response;
+      } catch (error) {
+        const diff = process.hrtime(start);
+        const durationSec = diff[0] + diff[1] / 1e9;
+        const durationMs = durationSec * 1000;
+        executionCounter.inc({ type: 'tool', status: 'failure' });
+        executionDuration.observe({ type: 'tool', status: 'failure' }, durationSec);
+        const msg = error instanceof Error ? error.message : String(error);
+        activeLogger.error({ durationMs, error }, `Error in ExecutionEngine.executeTool: ${msg}`);
+        throw error;
+      }
+    });
   }
 
   async readResource(request: ReadResourceRequest): Promise<ReadResourceResponse> {
+    const start = process.hrtime();
     const requestedAt = new Date();
+    const activeLogger = getLogger().child({ component: 'ExecutionEngine' });
+    activeLogger.info({ args: [sanitize(request)] }, 'Starting ExecutionEngine.readResource');
 
-    await this.ensureConnectionExists(request.connectionId);
-    await this.ensureResourceExists(request.connectionId, request.resourceName);
+    return traceSpan('ExecutionEngine.readResource', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'ExecutionEngine');
+        span.setAttribute('method', 'readResource');
+        span.setAttribute('connectionId', request.connectionId);
+        span.setAttribute('resourceName', request.resourceName);
+      }
 
-    const transportResult = await this.transport.readResource(
-      request.connectionId,
-      request.resourceName,
-    );
+      try {
+        await this.ensureConnectionExists(request.connectionId);
+        await this.ensureResourceExists(request.connectionId, request.resourceName);
 
-    const executedAt = new Date();
+        const transportResult = await this.transport.readResource(
+          request.connectionId,
+          request.resourceName,
+        );
 
-    if (!transportResult.success) {
-      return {
-        connectionId: request.connectionId,
-        resourceName: request.resourceName,
-        requestedAt,
-        executedAt,
-        status: 'error',
-        error: {
-          code: 'EXECUTION_ERROR',
-          message: transportResult.error ?? 'Resource retrieval failed',
-        },
-      };
-    }
+        const executedAt = new Date();
+        const diff = process.hrtime(start);
+        const durationSec = diff[0] + diff[1] / 1e9;
+        const durationMs = durationSec * 1000;
 
-    return {
-      connectionId: request.connectionId,
-      resourceName: request.resourceName,
-      requestedAt,
-      executedAt,
-      status: 'success',
-      contents: transportResult.contents,
-    };
+        if (!transportResult.success) {
+          const response: ReadResourceResponse = {
+            connectionId: request.connectionId,
+            resourceName: request.resourceName,
+            requestedAt,
+            executedAt,
+            status: 'error',
+            error: {
+              code: 'EXECUTION_ERROR',
+              message: transportResult.error ?? 'Resource retrieval failed',
+            },
+          };
+          executionCounter.inc({ type: 'resource', status: 'failure' });
+          executionDuration.observe({ type: 'resource', status: 'failure' }, durationSec);
+          activeLogger.error(
+            { durationMs, error: response.error },
+            `Error in ExecutionEngine.readResource: ${response.error?.message}`,
+          );
+          return response;
+        }
+
+        const response: ReadResourceResponse = {
+          connectionId: request.connectionId,
+          resourceName: request.resourceName,
+          requestedAt,
+          executedAt,
+          status: 'success',
+          contents: transportResult.contents,
+        };
+
+        executionCounter.inc({ type: 'resource', status: 'success' });
+        executionDuration.observe({ type: 'resource', status: 'success' }, durationSec);
+        activeLogger.info({ durationMs }, 'Completed ExecutionEngine.readResource successfully');
+        return response;
+      } catch (error) {
+        const diff = process.hrtime(start);
+        const durationSec = diff[0] + diff[1] / 1e9;
+        const durationMs = durationSec * 1000;
+        executionCounter.inc({ type: 'resource', status: 'failure' });
+        executionDuration.observe({ type: 'resource', status: 'failure' }, durationSec);
+        const msg = error instanceof Error ? error.message : String(error);
+        activeLogger.error({ durationMs, error }, `Error in ExecutionEngine.readResource: ${msg}`);
+        throw error;
+      }
+    });
   }
 
   async executePrompt(request: ExecutePromptRequest): Promise<ExecutePromptResponse> {
+    const start = process.hrtime();
     const requestedAt = new Date();
+    const activeLogger = getLogger().child({ component: 'ExecutionEngine' });
+    activeLogger.info({ args: [sanitize(request)] }, 'Starting ExecutionEngine.executePrompt');
 
-    await this.ensureConnectionExists(request.connectionId);
-    await this.ensurePromptExists(request.connectionId, request.promptName);
+    return traceSpan('ExecutionEngine.executePrompt', async (span) => {
+      if (span) {
+        span.setAttribute('service', 'ExecutionEngine');
+        span.setAttribute('method', 'executePrompt');
+        span.setAttribute('connectionId', request.connectionId);
+        span.setAttribute('promptName', request.promptName);
+      }
 
-    const transportResult = await this.transport.executePrompt(
-      request.connectionId,
-      request.promptName,
-      request.arguments,
-    );
+      try {
+        await this.ensureConnectionExists(request.connectionId);
+        await this.ensurePromptExists(request.connectionId, request.promptName);
 
-    const executedAt = new Date();
+        const transportResult = await this.transport.executePrompt(
+          request.connectionId,
+          request.promptName,
+          request.arguments,
+        );
 
-    if (!transportResult.success) {
-      return {
-        connectionId: request.connectionId,
-        promptName: request.promptName,
-        arguments: request.arguments,
-        requestedAt,
-        executedAt,
-        status: 'error',
-        error: {
-          code: 'EXECUTION_ERROR',
-          message: transportResult.error ?? 'Prompt execution failed',
-        },
-      };
-    }
+        const executedAt = new Date();
+        const diff = process.hrtime(start);
+        const durationSec = diff[0] + diff[1] / 1e9;
+        const durationMs = durationSec * 1000;
 
-    return {
-      connectionId: request.connectionId,
-      promptName: request.promptName,
-      arguments: request.arguments,
-      requestedAt,
-      executedAt,
-      status: 'success',
-      result: transportResult.result,
-    };
+        if (!transportResult.success) {
+          const response: ExecutePromptResponse = {
+            connectionId: request.connectionId,
+            promptName: request.promptName,
+            arguments: request.arguments,
+            requestedAt,
+            executedAt,
+            status: 'error',
+            error: {
+              code: 'EXECUTION_ERROR',
+              message: transportResult.error ?? 'Prompt execution failed',
+            },
+          };
+          executionCounter.inc({ type: 'prompt', status: 'failure' });
+          executionDuration.observe({ type: 'prompt', status: 'failure' }, durationSec);
+          activeLogger.error(
+            { durationMs, error: response.error },
+            `Error in ExecutionEngine.executePrompt: ${response.error?.message}`,
+          );
+          return response;
+        }
+
+        const response: ExecutePromptResponse = {
+          connectionId: request.connectionId,
+          promptName: request.promptName,
+          arguments: request.arguments,
+          requestedAt,
+          executedAt,
+          status: 'success',
+          result: transportResult.result,
+        };
+
+        executionCounter.inc({ type: 'prompt', status: 'success' });
+        executionDuration.observe({ type: 'prompt', status: 'success' }, durationSec);
+        activeLogger.info({ durationMs }, 'Completed ExecutionEngine.executePrompt successfully');
+        return response;
+      } catch (error) {
+        const diff = process.hrtime(start);
+        const durationSec = diff[0] + diff[1] / 1e9;
+        const durationMs = durationSec * 1000;
+        executionCounter.inc({ type: 'prompt', status: 'failure' });
+        executionDuration.observe({ type: 'prompt', status: 'failure' }, durationSec);
+        const msg = error instanceof Error ? error.message : String(error);
+        activeLogger.error({ durationMs, error }, `Error in ExecutionEngine.executePrompt: ${msg}`);
+        throw error;
+      }
+    });
   }
 
   private async ensureConnectionExists(connectionId: string): Promise<void> {
