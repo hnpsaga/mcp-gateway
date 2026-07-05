@@ -159,7 +159,7 @@ describe('Phase 17 — Observability & Operations', () => {
 
       const context = {
         requestId: 'req-xyz',
-        logger: mockLog,
+        logger: mockLog as unknown as ReturnType<typeof logger.child>,
       };
 
       await telemetryContextStorage.run(context, async () => {

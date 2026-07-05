@@ -24,5 +24,5 @@ export const logger = pino({
 
 export function getLogger(): pino.Logger {
   const store = telemetryContextStorage.getStore();
-  return store?.logger ?? logger;
+  return (store?.logger ?? logger) as pino.Logger;
 }
