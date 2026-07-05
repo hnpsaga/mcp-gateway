@@ -16,7 +16,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && pnpm copy:migrations",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -30,7 +30,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "docker:build": "docker build -t mcp-gateway:latest .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "copy:migrations": "mkdir -p dist/persistence && cp -R src/persistence/migrations dist/persistence/migrations"
   },
   "keywords": [],
   "author": "",

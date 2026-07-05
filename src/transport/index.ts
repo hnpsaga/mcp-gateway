@@ -14,6 +14,7 @@ export {
   JsonRpcParseError,
   JsonRpcTimeoutError,
 } from './json-rpc-client.js';
+export { RoutedTransport } from './routed-transport.js';
 export type { StdioProcessManagerConfig } from './stdio-process-manager.js';
 export { StdioProcessManager } from './stdio-process-manager.js';
 export type { StdioSession } from './stdio-session.js';

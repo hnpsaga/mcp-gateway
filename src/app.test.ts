@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildApp } from './app.js';
 import { InternalError, NotFoundError, ValidationError } from './shared/errors/index.js';
+import { MockHttpMcpServer } from './transport/test-utils/mock-http-mcp-server.js';
 
 describe('application bootstrap', () => {
   it('should build the app successfully', async () => {
@@ -266,5 +267,39 @@ describe('route registration', () => {
     expect(routes).toContain('connections');
 
     await app.close();
+  });
+});
+
+describe('transport routing', () => {
+  it('should connect streamable-http connections through the application transport', async () => {
+    const mockServer = new MockHttpMcpServer();
+    await mockServer.start();
+
+    const app = await buildApp();
+    try {
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/connections',
+        payload: {
+          name: 'HTTP MCP Server',
+          transportType: 'streamable-http',
+          transportConfig: { url: mockServer.url },
+        },
+      });
+      const connectionId = createRes.json().data.id;
+
+      const connectResult = await app.transport.connect(connectionId);
+
+      expect(connectResult).toMatchObject({
+        success: true,
+        connectionId,
+        status: 'connected',
+      });
+
+      await app.transport.disconnect(connectionId);
+    } finally {
+      await app.close();
+      await mockServer.stop();
+    }
   });
 });

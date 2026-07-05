@@ -122,14 +122,24 @@ export async function healthRoutes(fastify: FastifyInstance) {
         if (registry && transport) {
           const list = await registry.list();
           let active = 0;
+          const activeByTransport = new Map<string, number>();
           for (const conn of list) {
             const status = await transport.getStatus(conn.id);
             if (status.status === 'connected') {
               active++;
+              activeByTransport.set(
+                conn.transportType,
+                (activeByTransport.get(conn.transportType) ?? 0) + 1,
+              );
             }
           }
           activeConnectionsGauge.set(active);
-          transportConnectionsGauge.set({ transport_type: 'stdio' }, active);
+          for (const conn of list) {
+            transportConnectionsGauge.set(
+              { transport_type: conn.transportType },
+              activeByTransport.get(conn.transportType) ?? 0,
+            );
+          }
         }
       } catch (err) {
         request.log.error({ err }, 'Error collecting active transport connection metrics');
