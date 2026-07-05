@@ -54,9 +54,6 @@ README.md
 LICENSE
 GEMINI.md
 
-# Lock files (will be re-generated if needed)
-pnpm-lock.yaml
-
 # TypeScript config
 tsconfig.json
 tsconfig.tsbuildinfo
